@@ -677,14 +677,16 @@ async def analyze_sync(request: AnalyzeRequest):
     )
 
 
-@app.post("/test/feedback")
-async def test_feedback(
-    category: str = "정서적_고갈",
+@app.post("/feedback")
+async def generate_feedback(
     text: str = "오늘 너무 힘들었어",
     persona: str = "warm_counselor"
 ):
     """
-    피드백 생성 테스트
+    텍스트 입력 → 자동 분류 → 피드백 생성 (실제 사용용)
+    
+    - text: 사용자 일기 내용
+    - persona: 피드백 말투 선택
     
     persona 옵션:
     - warm_counselor: 따뜻한 상담사
@@ -693,9 +695,70 @@ async def test_feedback(
     - calm_mentor: 차분한 멘토
     - cheerful_supporter: 밝은 응원단
     """
+    global analyzer, feedback_gen
+    
+    # 1. 텍스트 분석 (카테고리 자동 판단)
+    analysis_result = analyzer.analyze(text)
+    
+    # 2. 페르소나 설정
+    persona_map = {
+        "warm_counselor": PersonaType.WARM_COUNSELOR,
+        "practical_advisor": PersonaType.PRACTICAL_ADVISOR,
+        "friendly_buddy": PersonaType.FRIENDLY_BUDDY,
+        "calm_mentor": PersonaType.CALM_MENTOR,
+        "cheerful_supporter": PersonaType.CHEERFUL_SUPPORTER,
+    }
+    persona_type = persona_map.get(persona, PersonaType.WARM_COUNSELOR)
+    feedback_gen.set_persona(persona_type)
+    
+    # 3. 카테고리 결정 (긍정/부정 → 세부 카테고리)
+    if analysis_result["primary_emotion"] == "긍정":
+        category = "긍정"
+    else:
+        category = analysis_result.get("burnout_category", "정서적_고갈")
+    
+    # 4. 피드백 생성
+    feedback = feedback_gen.generate(
+        category=category,
+        user_text=text,
+        keywords=analysis_result.get("keywords", [])
+    )
+    
+    persona_info = PERSONAS[persona_type]
+    
+    return {
+        "input_text": text,
+        "analysis": {
+            "primary_emotion": analysis_result["primary_emotion"],
+            "primary_score": round(analysis_result["primary_score"], 4),
+            "category": category,
+            "mbi_category": analysis_result["mbi_category"],
+            "keywords": analysis_result.get("keywords", []),
+        },
+        "persona": {
+            "type": persona,
+            "name": persona_info.name,
+            "tone": persona_info.tone,
+        },
+        "feedback": feedback
+    }
+
+
+@app.post("/test/feedback")
+async def test_feedback(
+    category: str = "정서적_고갈",
+    text: str = "오늘 너무 힘들었어",
+    persona: str = "warm_counselor"
+):
+    """
+    피드백 생성 테스트 (카테고리 직접 지정)
+    
+    - category: 감정 카테고리 (직접 지정)
+    - text: 사용자 일기 내용
+    - persona: 피드백 말투
+    """
     global feedback_gen
     
-    # 페르소나 문자열 매핑
     persona_map = {
         "warm_counselor": PersonaType.WARM_COUNSELOR,
         "practical_advisor": PersonaType.PRACTICAL_ADVISOR,
@@ -710,7 +773,7 @@ async def test_feedback(
     feedback = feedback_gen.generate(
         category=category,
         user_text=text,
-        keywords=["지침", "힘듦"]
+        keywords=[]
     )
     
     persona_info = PERSONAS[persona_type]

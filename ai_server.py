@@ -53,10 +53,60 @@ BURNOUT_TO_ACTIVITY_CATEGORY = {
     "자기비하": ["SMALL_WIN", "REST"],
 }
 
+# 활동 DB에서 가져온 실제 ID
 ACTIVITY_CATEGORY_IDS = {
-    "REST": [],
-    "VENTILATION": [],
-    "SMALL_WIN": [],
+    "REST": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    "VENTILATION": [16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
+    "SMALL_WIN": [31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45],
+}
+
+# 활동 내용 (ai_message 생성 시 참고용)
+ACTIVITY_CONTENT = {
+    1: "따뜻한 차/코코아 한 잔 마시기",
+    2: "좋아하는 향초/인센스 피우기",
+    3: "5분 동안 눈 감고 호흡에 집중하기",
+    4: "스마트폰 끄고 1시간 동안 디지털 디톡스",
+    5: "따뜻한 물로 샤워하거나 반신욕 하기",
+    6: "좋아하는 ASMR 듣기 (빗소리, 장작 등)",
+    7: "수면 안대 쓰고 20분 낮잠 자기",
+    8: "창문 열고 신선한 공기 마시기",
+    9: "공원 벤치에 앉아 햇볕 쬐기",
+    10: "조용한 카페에서 멍때리기",
+    11: "천천히 동네 한 바퀴 산책하기",
+    12: "숲이나 나무가 많은 곳 걷기(삼림욕)",
+    13: "잔잔한 클래식/재즈 음악 감상",
+    14: "좋아하는 동물 보기(영상/실물)",
+    15: "찜질방/사우나 가서 땀 빼기",
+    16: "코인 노래방 가서 소리 지르기",
+    17: "이면지에 낙서하고 박박 찢어버리기",
+    18: "매운 음식 먹고 땀 흘리기",
+    19: "베개에 얼굴 묻고 소리치기",
+    20: "빠른 비트의 댄스 음악 듣기",
+    21: "오락실 펀치 기계/두더지 잡기",
+    22: "숨이 찰 때까지 3분만 전력 질주",
+    23: "공포 영화나 스릴러 영화 보기",
+    24: "방 청소/정리하며 몸 움직이기",
+    25: "친구에게 전화해 하소연하기",
+    26: "사람 많은 번화가 구경하기",
+    27: "배팅장에서 야구 공 치기",
+    28: "유튜브에서 '웃긴 영상' 모음 보기",
+    29: "아이스 음료 벌컥벌컥 마시기",
+    30: "PC방/집에서 게임 한 판 하기",
+    31: "일어나자마자 이불 개기",
+    32: "물 한 잔 시원하게 마시기",
+    33: "책상 위 지저분한 것 3개만 치우기",
+    34: "스마트폰 갤러리/스크린샷 정리하기",
+    35: "읽지 않은 스팸 메일/문자 삭제하기",
+    36: "영양제/비타민 챙겨 먹기",
+    37: "거울 닦기 / 화장실 세면대 닦기",
+    38: "5분 스트레칭하기",
+    39: "하늘 사진 예쁘게 1장 찍기",
+    40: "편의점에서 좋아하는 간식 사 오기",
+    41: "엘리베이터 대신 계단 이용하기",
+    42: "다 쓴 물건 제자리에 놓기",
+    43: "오늘 할 일(To-do) 1개만 적어보기",
+    44: "길가에 떨어진 쓰레기 1개 줍기",
+    45: "식물에 물 주기",
 }
 
 
@@ -297,17 +347,35 @@ class FeedbackGenerator:
             print(f"LLM 로딩 실패, 템플릿 모드 사용: {e}")
             self.use_llm = False
     
-    def generate(self, category: str, user_text: str = "", keywords: List[str] = None) -> str:
+    def generate(self, category: str, user_text: str = "", keywords: List[str] = None, activity_name: str = "") -> str:
         if self.use_llm and self.generator:
-            return self._generate_llm(category, user_text, keywords)
-        return self._generate_template(category, keywords)
+            return self._generate_llm(category, user_text, keywords, activity_name)
+        return self._generate_template(category, keywords, activity_name)
     
-    def _generate_template(self, category: str, keywords: List[str] = None) -> str:
-        return get_template_feedback(persona_type=self.persona_type, category=category, keywords=keywords)
+    def _generate_template(self, category: str, keywords: List[str] = None, activity_name: str = "") -> str:
+        feedback = get_template_feedback(persona_type=self.persona_type, category=category, keywords=keywords)
+        
+        # 활동명이 있으면 추천 메시지 추가
+        if activity_name:
+            persona = PERSONAS[self.persona_type]
+            if self.persona_type == PersonaType.FRIENDLY_BUDDY:
+                feedback += f" '{activity_name}' 어때?"
+            elif self.persona_type == PersonaType.CHEERFUL_SUPPORTER:
+                feedback += f" '{activity_name}' 한번 해봐요!"
+            elif self.persona_type == PersonaType.PRACTICAL_ADVISOR:
+                feedback += f" '{activity_name}'을(를) 추천드려요."
+            else:
+                feedback += f" '{activity_name}'은(는) 어떨까요?"
+        
+        return feedback
     
-    def _generate_llm(self, category: str, user_text: str, keywords: List[str]) -> str:
+    def _generate_llm(self, category: str, user_text: str, keywords: List[str], activity_name: str = "") -> str:
         """LLM으로 피드백 생성"""
         persona = PERSONAS[self.persona_type]
+        
+        activity_instruction = ""
+        if activity_name:
+            activity_instruction = f"\n- '"{activity_name}"' 활동을 자연스럽게 추천"
         
         prompt = f"""### 명령어:
 당신은 '{persona.name}'입니다. {persona.description}
@@ -317,12 +385,13 @@ class FeedbackGenerator:
 - {persona.tone} 톤 유지
 - 감정을 인정하고 공감
 - 강요하지 않고 부드럽게 제안
-- 이모지 사용 금지
+- 이모지 사용 금지{activity_instruction}
 
 ### 입력:
 감정 상태: {category}
 사용자 일기: "{user_text[:150] if user_text else '(내용 없음)'}"
 주요 키워드: {', '.join(keywords) if keywords else '없음'}
+추천 활동: {activity_name if activity_name else '없음'}
 
 ### 응답:
 """
@@ -508,7 +577,7 @@ async def process_analysis(diary_id: int, user_id: int, persona: str, history: L
 
 
 def generate_recommendations(category: str, user_text: str, keywords: List[str]) -> List[RecommendationItem]:
-    """활동 추천 생성"""
+    """활동 추천 생성 - 활동 내용을 반영한 ai_message"""
     recommendations = []
     
     if category == "긍정" or category is None:
@@ -520,7 +589,15 @@ def generate_recommendations(category: str, user_text: str, keywords: List[str])
         activity_ids = ACTIVITY_CATEGORY_IDS.get(act_category, [])
         if activity_ids:
             selected_id = random.choice(activity_ids)
-            ai_message = feedback_gen.generate(category=category, user_text=user_text, keywords=keywords)
+            activity_name = ACTIVITY_CONTENT.get(selected_id, "")
+            
+            # 활동 내용을 포함한 메시지 생성
+            ai_message = feedback_gen.generate(
+                category=category, 
+                user_text=user_text, 
+                keywords=keywords,
+                activity_name=activity_name  # 활동명 전달
+            )
             recommendations.append(RecommendationItem(activity_id=selected_id, ai_message=ai_message))
     
     return recommendations

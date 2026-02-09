@@ -254,20 +254,106 @@ class BurnoutAnalyzer:
 
 
 # ============================================
-# 피드백 생성기
+# 피드백 생성기 (템플릿 + LLM)
 # ============================================
 
 class FeedbackGenerator:
-    def __init__(self, persona_type: PersonaType = PersonaType.WARM_COUNSELOR):
+    def __init__(self, use_llm: bool = False, persona_type: PersonaType = PersonaType.WARM_COUNSELOR):
+        self.use_llm = use_llm
         self.persona_type = persona_type
         self.prompt_builder = PromptBuilder(persona_type)
+        self.generator = None
+        self.tokenizer = None
+        
+        if use_llm:
+            self._load_llm()
     
     def set_persona(self, persona_type: PersonaType):
         self.persona_type = persona_type
         self.prompt_builder.set_persona(persona_type)
     
+    def _load_llm(self):
+        """KoAlpaca LLM 로드"""
+        try:
+            from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+            
+            MODEL_NAME = "beomi/KoAlpaca-Polyglot-5.8B"
+            print(f"LLM 로딩 중: {MODEL_NAME}")
+            
+            self.tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+            model = AutoModelForCausalLM.from_pretrained(
+                MODEL_NAME,
+                device_map="auto",
+                torch_dtype=torch.float16
+            )
+            self.generator = pipeline(
+                "text-generation",
+                model=model,
+                tokenizer=self.tokenizer,
+                device_map="auto"
+            )
+            print("LLM 로딩 완료!")
+        except Exception as e:
+            print(f"LLM 로딩 실패, 템플릿 모드 사용: {e}")
+            self.use_llm = False
+    
     def generate(self, category: str, user_text: str = "", keywords: List[str] = None) -> str:
+        if self.use_llm and self.generator:
+            return self._generate_llm(category, user_text, keywords)
+        return self._generate_template(category, keywords)
+    
+    def _generate_template(self, category: str, keywords: List[str] = None) -> str:
         return get_template_feedback(persona_type=self.persona_type, category=category, keywords=keywords)
+    
+    def _generate_llm(self, category: str, user_text: str, keywords: List[str]) -> str:
+        """LLM으로 피드백 생성"""
+        persona = PERSONAS[self.persona_type]
+        
+        prompt = f"""### 명령어:
+당신은 '{persona.name}'입니다. {persona.description}
+번아웃을 겪는 직장인에게 {persona.tone} 톤으로 2-3문장의 공감 메시지를 작성하세요.
+
+규칙:
+- {persona.tone} 톤 유지
+- 감정을 인정하고 공감
+- 강요하지 않고 부드럽게 제안
+- 이모지 사용 금지
+
+### 입력:
+감정 상태: {category}
+사용자 일기: "{user_text[:150] if user_text else '(내용 없음)'}"
+주요 키워드: {', '.join(keywords) if keywords else '없음'}
+
+### 응답:
+"""
+        
+        try:
+            result = self.generator(
+                prompt,
+                max_new_tokens=100,
+                do_sample=True,
+                temperature=0.7,
+                top_p=0.9,
+                repetition_penalty=1.2,
+                pad_token_id=self.tokenizer.eos_token_id
+            )
+            
+            generated = result[0]['generated_text']
+            response = generated.split("### 응답:")[-1].strip()
+            
+            # 줄바꿈 이후 잘라내기
+            if "\n\n" in response:
+                response = response.split("\n\n")[0].strip()
+            
+            # 응답이 너무 짧으면 템플릿으로 폴백
+            if len(response) < 10:
+                return self._generate_template(category, keywords)
+            
+            return response
+            
+        except Exception as e:
+            print(f"LLM 생성 실패: {e}")
+            return self._generate_template(category, keywords)
 
 
 # ============================================
@@ -295,7 +381,12 @@ async def lifespan(app: FastAPI):
     global analyzer, feedback_gen
     analyzer = BurnoutAnalyzer()
     analyzer.initialize()
-    feedback_gen = FeedbackGenerator()
+    
+    # LLM 사용 여부 환경변수로 설정 (USE_LLM=true)
+    use_llm = os.getenv("USE_LLM", "false").lower() == "true"
+    print(f"\ud53c드백 모드: {'LLM (KoAlpaca)' if use_llm else '템플릿'}")
+    feedback_gen = FeedbackGenerator(use_llm=use_llm)
+    
     yield
     print("서버 종료")
 

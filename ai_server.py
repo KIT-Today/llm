@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-번아웃 감지 AI 서버 v2.0
+번아웃 감지 AI 서버 v2.3
 =======================
 
 POST /analyze : 분석 요청 -> 즉시 200 OK -> 백그라운드 분석 -> 콜백
@@ -10,419 +10,41 @@ POST /analyze : 분석 요청 -> 즉시 200 OK -> 백그라운드 분석 -> 콜�
 
 import os
 import httpx
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import numpy as np
 import random
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from sentence_transformers import SentenceTransformer
 
-from prompts import (
-    PersonaType, 
-    PERSONAS,
-    PromptBuilder, 
-    get_template_feedback,
+# 분할된 모듈 임포트
+from config import Config
+from constants import (
+    PERSONA_MAP,
+    BURNOUT_TO_ACTIVITY_CATEGORY,
+    ACTIVITY_CATEGORY_IDS,
+    ACTIVITY_CONTENT,
 )
-
-
-# ============================================
-# 설정
-# ============================================
-
-class Config:
-    BACKEND_CALLBACK_URL = os.getenv("BACKEND_CALLBACK_URL", "http://127.0.0.1:8000/diaries/analysis-callback")
-    MODEL_DIR = os.getenv("MODEL_DIR", ".")
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-    MIN_DIARY_COUNT_FOR_RECOMMENDATION = 3
-
-
-# ============================================
-# 활동 카테고리 매핑
-# ============================================
-
-BURNOUT_TO_ACTIVITY_CATEGORY = {
-    "정서적_고갈": ["REST", "SMALL_WIN"],
-    "좌절_압박": ["VENTILATION", "REST"],
-    "부정적_대인관계": ["VENTILATION", "SMALL_WIN"],
-    "자기비하": ["SMALL_WIN", "REST"],
-}
-
-# 활동 DB에서 가져온 실제 ID
-ACTIVITY_CATEGORY_IDS = {
-    "REST": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-    "VENTILATION": [16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
-    "SMALL_WIN": [31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45],
-}
-
-# 활동 내용 (ai_message 생성 시 참고용)
-ACTIVITY_CONTENT = {
-    1: "따뜻한 차/코코아 한 잔 마시기",
-    2: "좋아하는 향초/인센스 피우기",
-    3: "5분 동안 눈 감고 호흡에 집중하기",
-    4: "스마트폰 끄고 1시간 동안 디지털 디톡스",
-    5: "따뜻한 물로 샤워하거나 반신욕 하기",
-    6: "좋아하는 ASMR 듣기 (빗소리, 장작 등)",
-    7: "수면 안대 쓰고 20분 낮잠 자기",
-    8: "창문 열고 신선한 공기 마시기",
-    9: "공원 벤치에 앉아 햇볕 쬐기",
-    10: "조용한 카페에서 멍때리기",
-    11: "천천히 동네 한 바퀴 산책하기",
-    12: "숲이나 나무가 많은 곳 걷기(삼림욕)",
-    13: "잔잔한 클래식/재즈 음악 감상",
-    14: "좋아하는 동물 보기(영상/실물)",
-    15: "찜질방/사우나 가서 땀 빼기",
-    16: "코인 노래방 가서 소리 지르기",
-    17: "이면지에 낙서하고 박박 찢어버리기",
-    18: "매운 음식 먹고 땀 흘리기",
-    19: "베개에 얼굴 묻고 소리치기",
-    20: "빠른 비트의 댄스 음악 듣기",
-    21: "오락실 펀치 기계/두더지 잡기",
-    22: "숨이 찰 때까지 3분만 전력 질주",
-    23: "공포 영화나 스릴러 영화 보기",
-    24: "방 청소/정리하며 몸 움직이기",
-    25: "친구에게 전화해 하소연하기",
-    26: "사람 많은 번화가 구경하기",
-    27: "배팅장에서 야구 공 치기",
-    28: "유튜브에서 '웃긴 영상' 모음 보기",
-    29: "아이스 음료 벌컥벌컥 마시기",
-    30: "PC방/집에서 게임 한 판 하기",
-    31: "일어나자마자 이불 개기",
-    32: "물 한 잔 시원하게 마시기",
-    33: "책상 위 지저분한 것 3개만 치우기",
-    34: "스마트폰 갤러리/스크린샷 정리하기",
-    35: "읽지 않은 스팸 메일/문자 삭제하기",
-    36: "영양제/비타민 챙겨 먹기",
-    37: "거울 닦기 / 화장실 세면대 닦기",
-    38: "5분 스트레칭하기",
-    39: "하늘 사진 예쁘게 1장 찍기",
-    40: "편의점에서 좋아하는 간식 사 오기",
-    41: "엘리베이터 대신 계단 이용하기",
-    42: "다 쓴 물건 제자리에 놓기",
-    43: "오늘 할 일(To-do) 1개만 적어보기",
-    44: "길가에 떨어진 쓰레기 1개 줍기",
-    45: "식물에 물 주기",
-}
-
-
-# ============================================
-# 카테고리 정의
-# ============================================
-
-STAGE1_CATEGORIES = {0: "긍정", 1: "부정"}
-STAGE2_CATEGORIES = {0: "정서적_고갈", 1: "좌절_압박", 2: "부정적_대인관계", 3: "자기비하"}
-
-MBI_CATEGORY_MAP = {
-    "긍정": "NONE",
-    "정서적_고갈": "EMOTIONAL_EXHAUSTION",
-    "좌절_압박": "FRUSTRATION_PRESSURE",
-    "부정적_대인관계": "NEGATIVE_RELATIONSHIP",
-    "자기비하": "SELF_DEPRECATION"
-}
-
-BURNOUT_KEYWORDS = {
-    "긍정": {"keywords": ["좋다", "좋아", "행복", "기쁘", "뿌듯", "만족", "감사", "고맙", "다행", "홀가분"]},
-    "정서적_고갈": {"keywords": ["지치", "피곤", "힘들", "무기력", "탈진", "녹초", "방전", "우울", "슬프", "귀찮"]},
-    "좌절_압박": {"keywords": ["화나", "짜증", "열받", "분노", "억울", "압박", "스트레스", "답답", "한계"]},
-    "부정적_대인관계": {"keywords": ["무시", "소외", "배신", "갈등", "서운", "외로", "실망", "오해"]},
-    "자기비하": {"keywords": ["못하", "부족", "무능", "한심", "불안", "자책", "후회", "실패"]},
-}
-
-
-# ============================================
-# Pydantic 모델
-# ============================================
-
-class DiaryHistory(BaseModel):
-    diary_id: int
-    content: Optional[str] = None
-    keywords: Optional[Dict[str, Any]] = None
-    created_at: str
-
-
-class AnalyzeRequest(BaseModel):
-    """백엔드 -> AI 서버 요청"""
-    diary_id: int
-    user_id: int
-    persona: str = "warm_counselor"
-    history: List[DiaryHistory]
-
-
-class RecommendationItem(BaseModel):
-    activity_id: int
-    ai_message: str
-
-
-class DiaryAnalysisResult(BaseModel):
-    diary_id: int
-    primary_emotion: str
-    primary_score: float
-    mbi_category: str
-    keywords: List[str]
-
-
-class AnalysisCallback(BaseModel):
-    """AI 서버 -> 백엔드 콜백"""
-    diary_id: int
-    primary_emotion: str
-    primary_score: float
-    mbi_category: str
-    emotion_probs: Dict[str, float]
-    ai_message: str
-    diary_analyses: List[DiaryAnalysisResult]
-    recommendations: List[RecommendationItem]
-
-
-# ============================================
-# 분류 모델
-# ============================================
-
-class BurnoutClassifier(nn.Module):
-    def __init__(self, input_dim=1024, hidden_dim=256, num_classes=2, dropout=0.5):
-        super().__init__()
-        self.classifier = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.LayerNorm(hidden_dim // 2),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim // 2, num_classes)
-        )
-
-    def forward(self, x):
-        return self.classifier(x)
-
-
-# ============================================
-# AI 분석 엔진
-# ============================================
-
-class BurnoutAnalyzer:
-    _instance = None
-    
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
-    
-    def initialize(self):
-        if self._initialized:
-            return
-        
-        print(f"모델 로딩 중... (Device: {Config.DEVICE})")
-        
-        self.kure = SentenceTransformer("nlpai-lab/KURE-v1", device=Config.DEVICE)
-        
-        s1_path = f"{Config.MODEL_DIR}/stage1_model.pt"
-        s1_ckpt = torch.load(s1_path, map_location=Config.DEVICE, weights_only=False)
-        self.stage1 = BurnoutClassifier(
-            input_dim=s1_ckpt.get('embedding_dim', 1024),
-            hidden_dim=s1_ckpt.get('hidden_dim', 256),
-            num_classes=2
-        ).to(Config.DEVICE)
-        self.stage1.load_state_dict(s1_ckpt['model_state_dict'])
-        self.stage1.eval()
-        
-        s2_path = f"{Config.MODEL_DIR}/stage2_model.pt"
-        s2_ckpt = torch.load(s2_path, map_location=Config.DEVICE, weights_only=False)
-        self.stage2 = BurnoutClassifier(
-            input_dim=s2_ckpt.get('embedding_dim', 1024),
-            hidden_dim=s2_ckpt.get('hidden_dim', 256),
-            num_classes=4
-        ).to(Config.DEVICE)
-        self.stage2.load_state_dict(s2_ckpt['model_state_dict'])
-        self.stage2.eval()
-        
-        self._initialized = True
-        print("모델 로딩 완료!")
-    
-    def _get_embedding(self, text: str) -> torch.Tensor:
-        return self.kure.encode(text, convert_to_tensor=True).unsqueeze(0).to(Config.DEVICE)
-    
-    def predict_stage1(self, text: str) -> tuple:
-        with torch.no_grad():
-            emb = self._get_embedding(text)
-            logits = self.stage1(emb)
-            probs = F.softmax(logits, dim=-1)[0].cpu().numpy()
-            pred = int(np.argmax(probs))
-        return pred, probs
-    
-    def predict_stage2(self, text: str) -> tuple:
-        with torch.no_grad():
-            emb = self._get_embedding(text)
-            logits = self.stage2(emb)
-            probs = F.softmax(logits, dim=-1)[0].cpu().numpy()
-            pred = int(np.argmax(probs))
-        return pred, probs
-    
-    def extract_keywords(self, text: str, category: str, top_k: int = 3) -> List[str]:
-        if category not in BURNOUT_KEYWORDS:
-            return []
-        keywords = BURNOUT_KEYWORDS[category]["keywords"]
-        matched = [kw for kw in keywords if kw in text]
-        return matched[:top_k]
-    
-    def analyze(self, text: str, keywords: Optional[Dict] = None) -> Dict:
-        analysis_text = text or ""
-        if keywords:
-            keyword_text = " ".join([f"{k}: {v}" if isinstance(v, str) else str(v) for k, v in keywords.items()])
-            analysis_text = f"{analysis_text} {keyword_text}".strip()
-        
-        if not analysis_text:
-            return {
-                "primary_emotion": "긍정", "primary_score": 0.5, "mbi_category": "NONE",
-                "emotion_probs": {"긍정": 0.5, "부정": 0.5}, "burnout_category": None, "keywords": []
-            }
-        
-        s1_pred, s1_probs = self.predict_stage1(analysis_text)
-        primary_emotion = STAGE1_CATEGORIES[s1_pred]
-        
-        result = {
-            "primary_emotion": primary_emotion,
-            "primary_score": float(s1_probs[s1_pred]),
-            "emotion_probs": {"긍정": float(s1_probs[0]), "부정": float(s1_probs[1])},
-            "burnout_category": None, "mbi_category": "NONE", "keywords": []
-        }
-        
-        if s1_pred == 1:
-            s2_pred, s2_probs = self.predict_stage2(analysis_text)
-            burnout_category = STAGE2_CATEGORIES[s2_pred]
-            result["burnout_category"] = burnout_category
-            result["mbi_category"] = MBI_CATEGORY_MAP[burnout_category]
-            result["keywords"] = self.extract_keywords(analysis_text, burnout_category)
-        
-        return result
-
-
-# ============================================
-# 피드백 생성기 (템플릿 + LLM)
-# ============================================
-
-class FeedbackGenerator:
-    def __init__(self, use_llm: bool = False, persona_type: PersonaType = PersonaType.WARM_COUNSELOR):
-        self.use_llm = use_llm
-        self.persona_type = persona_type
-        self.prompt_builder = PromptBuilder(persona_type)
-        self.generator = None
-        self.tokenizer = None
-        
-        if use_llm:
-            self._load_llm()
-    
-    def set_persona(self, persona_type: PersonaType):
-        self.persona_type = persona_type
-        self.prompt_builder.set_persona(persona_type)
-    
-    def _load_llm(self):
-        """KoAlpaca LLM 로드"""
-        try:
-            from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
-            
-            MODEL_NAME = "beomi/KoAlpaca-Polyglot-5.8B"
-            print(f"LLM 로딩 중: {MODEL_NAME}")
-            
-            self.tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-            model = AutoModelForCausalLM.from_pretrained(
-                MODEL_NAME,
-                device_map="auto",
-                torch_dtype=torch.float16
-            )
-            self.generator = pipeline(
-                "text-generation",
-                model=model,
-                tokenizer=self.tokenizer,
-                device_map="auto"
-            )
-            print("LLM 로딩 완료!")
-        except Exception as e:
-            print(f"LLM 로딩 실패, 템플릿 모드 사용: {e}")
-            self.use_llm = False
-    
-    def generate(self, category: str, user_text: str = "", keywords: List[str] = None, activity_name: str = "") -> str:
-        if self.use_llm and self.generator:
-            return self._generate_llm(category, user_text, keywords, activity_name)
-        return self._generate_template(category, keywords, activity_name)
-    
-    def _generate_template(self, category: str, keywords: List[str] = None, activity_name: str = "") -> str:
-        feedback = get_template_feedback(persona_type=self.persona_type, category=category, keywords=keywords)
-        
-        # 활동명이 있으면 추천 메시지 추가
-        if activity_name:
-            persona = PERSONAS[self.persona_type]
-            if self.persona_type == PersonaType.FRIENDLY_BUDDY:
-                feedback += f" '{activity_name}' 어때?"
-            elif self.persona_type == PersonaType.CHEERFUL_SUPPORTER:
-                feedback += f" '{activity_name}' 한번 해봐요!"
-            elif self.persona_type == PersonaType.PRACTICAL_ADVISOR:
-                feedback += f" '{activity_name}'을(를) 추천드려요."
-            else:
-                feedback += f" '{activity_name}'은(는) 어떨까요?"
-        
-        return feedback
-    
-    def _generate_llm(self, category: str, user_text: str, keywords: List[str], activity_name: str = "") -> str:
-        """LLM으로 피드백 생성"""
-        persona = PERSONAS[self.persona_type]
-        
-        activity_instruction = ""
-        if activity_name:
-            activity_instruction = f"\n- '"{activity_name}"' 활동을 자연스럽게 추천"
-        
-        prompt = f"""### 명령어:
-당신은 '{persona.name}'입니다. {persona.description}
-번아웃을 겪는 직장인에게 {persona.tone} 톤으로 2-3문장의 공감 메시지를 작성하세요.
-
-규칙:
-- {persona.tone} 톤 유지
-- 감정을 인정하고 공감
-- 강요하지 않고 부드럽게 제안
-- 이모지 사용 금지{activity_instruction}
-
-### 입력:
-감정 상태: {category}
-사용자 일기: "{user_text[:150] if user_text else '(내용 없음)'}"
-주요 키워드: {', '.join(keywords) if keywords else '없음'}
-추천 활동: {activity_name if activity_name else '없음'}
-
-### 응답:
-"""
-        
-        try:
-            result = self.generator(
-                prompt,
-                max_new_tokens=100,
-                do_sample=True,
-                temperature=0.7,
-                top_p=0.9,
-                repetition_penalty=1.2,
-                pad_token_id=self.tokenizer.eos_token_id
-            )
-            
-            generated = result[0]['generated_text']
-            response = generated.split("### 응답:")[-1].strip()
-            
-            # 줄바꿈 이후 잘라내기
-            if "\n\n" in response:
-                response = response.split("\n\n")[0].strip()
-            
-            # 응답이 너무 짧으면 템플릿으로 폴백
-            if len(response) < 10:
-                return self._generate_template(category, keywords)
-            
-            return response
-            
-        except Exception as e:
-            print(f"LLM 생성 실패: {e}")
-            return self._generate_template(category, keywords)
+from models import (
+    AnalyzeRequest,
+    AnalysisCallback,
+    DiaryHistory,
+    DiaryAnalysisResult,
+    RecommendationItem,
+)
+from analyzer import BurnoutAnalyzer
+from feedback import FeedbackGenerator
+from emotion_match import EmotionMatchChecker
+from insight import StatisticsInsightGenerator
+from prompts import PersonaType
+from error_codes import (
+    ErrorCode,
+    ErrorDetail,
+    AIServerException,
+    create_error,
+    get_fallback_feedback,
+    ERROR_DEFINITIONS,
+)
 
 
 # ============================================
@@ -431,14 +53,8 @@ class FeedbackGenerator:
 
 analyzer: Optional[BurnoutAnalyzer] = None
 feedback_gen: Optional[FeedbackGenerator] = None
-
-PERSONA_MAP = {
-    "warm_counselor": PersonaType.WARM_COUNSELOR,
-    "practical_advisor": PersonaType.PRACTICAL_ADVISOR,
-    "friendly_buddy": PersonaType.FRIENDLY_BUDDY,
-    "calm_mentor": PersonaType.CALM_MENTOR,
-    "cheerful_supporter": PersonaType.CHEERFUL_SUPPORTER,
-}
+emotion_checker: Optional[EmotionMatchChecker] = None
+insight_gen: Optional[StatisticsInsightGenerator] = None
 
 
 # ============================================
@@ -447,14 +63,17 @@ PERSONA_MAP = {
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global analyzer, feedback_gen
+    global analyzer, feedback_gen, emotion_checker, insight_gen
+    
     analyzer = BurnoutAnalyzer()
     analyzer.initialize()
     
-    # LLM 사용 여부 환경변수로 설정 (USE_LLM=true)
     use_llm = os.getenv("USE_LLM", "false").lower() == "true"
-    print(f"\ud53c드백 모드: {'LLM (KoAlpaca)' if use_llm else '템플릿'}")
+    print(f"피드백 모드: {'LLM (KoAlpaca)' if use_llm else '템플릿'}")
+    
     feedback_gen = FeedbackGenerator(use_llm=use_llm)
+    emotion_checker = EmotionMatchChecker()
+    insight_gen = StatisticsInsightGenerator()
     
     yield
     print("서버 종료")
@@ -462,12 +81,18 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="번아웃 감지 AI 서버",
-    description="한국형 번아웃 감정 분석 및 피드백 생성 API",
-    version="2.0.0",
+    description="한국형 번아웃 감정 분석 API",
+    version="2.3.0",
     lifespan=lifespan
 )
 
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
 
 
 # ============================================
@@ -479,9 +104,10 @@ async def root():
     return {
         "status": "running",
         "service": "Burnout Detection AI Server",
-        "version": "2.0.0",
+        "version": "2.3.0",
         "device": Config.DEVICE,
-        "model_loaded": analyzer is not None and analyzer._initialized
+        "model_loaded": analyzer is not None and analyzer._initialized,
+        "features": ["emotion_analysis", "emotion_match_check", "statistics_insight", "activity_recommendation"]
     }
 
 
@@ -492,16 +118,7 @@ async def health_check():
 
 @app.post("/analyze")
 async def analyze_diary(request: AnalyzeRequest, background_tasks: BackgroundTasks):
-    """
-    일기 분석 요청
-    
-    - diary_id: 오늘 일기 ID
-    - user_id: 사용자 ID
-    - persona: 피드백 말투 (warm_counselor, practical_advisor, friendly_buddy, calm_mentor, cheerful_supporter)
-    - history: 2주치 일기 (오늘이 index 0)
-    
-    즉시 200 OK 반환 후 백그라운드에서 분석, 완료 시 콜백 전송
-    """
+    """일기 분석 요청 (비동기)"""
     if not request.history:
         raise HTTPException(status_code=400, detail="history가 비어있습니다.")
     
@@ -516,119 +133,18 @@ async def analyze_diary(request: AnalyzeRequest, background_tasks: BackgroundTas
     return {"status": "accepted", "message": "분석이 시작되었습니다."}
 
 
-async def process_analysis(diary_id: int, user_id: int, persona: str, history: List[DiaryHistory]):
-    """백그라운드 분석"""
-    try:
-        print(f"분석 시작: diary_id={diary_id}, user_id={user_id}, persona={persona}")
-        
-        # 1. 페르소나 설정
-        persona_type = PERSONA_MAP.get(persona, PersonaType.WARM_COUNSELOR)
-        feedback_gen.set_persona(persona_type)
-        
-        # 2. 모든 일기 분석
-        diary_analyses = []
-        for diary in history:
-            result = analyzer.analyze(diary.content or "", diary.keywords or {})
-            diary_analyses.append(DiaryAnalysisResult(
-                diary_id=diary.diary_id,
-                primary_emotion=result["primary_emotion"],
-                primary_score=round(result["primary_score"], 4),
-                mbi_category=result["mbi_category"],
-                keywords=result.get("keywords", [])
-            ))
-        
-        # 3. 오늘 일기 분석
-        today_diary = history[0]
-        today_result = analyzer.analyze(today_diary.content or "", today_diary.keywords or {})
-        
-        category = "긍정" if today_result["primary_emotion"] == "긍정" else today_result.get("burnout_category", "정서적_고갈")
-        
-        # 4. 피드백 생성
-        ai_message = feedback_gen.generate(
-            category=category,
-            user_text=today_diary.content or "",
-            keywords=today_result.get("keywords", [])
-        )
-        
-        # 5. 활동 추천 (3개 이상일 때만)
-        recommendations = []
-        if len(history) >= Config.MIN_DIARY_COUNT_FOR_RECOMMENDATION:
-            recommendations = generate_recommendations(category, today_diary.content or "", today_result.get("keywords", []))
-        
-        # 6. 콜백 전송
-        callback_data = AnalysisCallback(
-            diary_id=diary_id,
-            primary_emotion=today_result["primary_emotion"],
-            primary_score=round(today_result["primary_score"], 4),
-            mbi_category=today_result["mbi_category"],
-            emotion_probs=today_result["emotion_probs"],
-            ai_message=ai_message,
-            diary_analyses=diary_analyses,
-            recommendations=recommendations
-        )
-        
-        await send_callback(callback_data)
-        print(f"분석 완료: diary_id={diary_id}, 일기수={len(diary_analyses)}, 추천수={len(recommendations)}")
-        
-    except Exception as e:
-        print(f"분석 실패: diary_id={diary_id}, error={e}")
-        import traceback
-        traceback.print_exc()
-
-
-def generate_recommendations(category: str, user_text: str, keywords: List[str]) -> List[RecommendationItem]:
-    """활동 추천 생성 - 활동 내용을 반영한 ai_message"""
-    recommendations = []
-    
-    if category == "긍정" or category is None:
-        return recommendations
-    
-    activity_categories = BURNOUT_TO_ACTIVITY_CATEGORY.get(category, ["REST", "SMALL_WIN"])
-    
-    for act_category in activity_categories:
-        activity_ids = ACTIVITY_CATEGORY_IDS.get(act_category, [])
-        if activity_ids:
-            selected_id = random.choice(activity_ids)
-            activity_name = ACTIVITY_CONTENT.get(selected_id, "")
-            
-            # 활동 내용을 포함한 메시지 생성
-            ai_message = feedback_gen.generate(
-                category=category, 
-                user_text=user_text, 
-                keywords=keywords,
-                activity_name=activity_name  # 활동명 전달
-            )
-            recommendations.append(RecommendationItem(activity_id=selected_id, ai_message=ai_message))
-    
-    return recommendations
-
-
-async def send_callback(data: AnalysisCallback):
-    """백엔드 콜백"""
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(Config.BACKEND_CALLBACK_URL, json=data.model_dump())
-            if response.status_code == 200:
-                print(f"콜백 성공: diary_id={data.diary_id}")
-            else:
-                print(f"콜백 실패: status={response.status_code}")
-    except Exception as e:
-        print(f"콜백 에러: {e}")
-
-
-# ============================================
-# 테스트/설정 엔드포인트
-# ============================================
-
 @app.post("/analyze/sync")
 async def analyze_sync(request: AnalyzeRequest):
-    """동기 분석 (테스트용) - 콜백 없이 바로 결과 반환"""
+    """동기 분석 (테스트용)"""
     if not request.history:
         raise HTTPException(status_code=400, detail="history가 비어있습니다.")
     
     persona_type = PERSONA_MAP.get(request.persona, PersonaType.WARM_COUNSELOR)
     feedback_gen.set_persona(persona_type)
+    emotion_checker.set_persona(persona_type)
+    insight_gen.set_persona(persona_type)
     
+    # 모든 일기 분석
     diary_analyses = []
     for diary in request.history:
         result = analyzer.analyze(diary.content or "", diary.keywords or {})
@@ -640,11 +156,30 @@ async def analyze_sync(request: AnalyzeRequest):
             keywords=result.get("keywords", [])
         ))
     
+    # 오늘 일기 분석
     today_diary = request.history[0]
     today_result = analyzer.analyze(today_diary.content or "", today_diary.keywords or {})
     category = "긍정" if today_result["primary_emotion"] == "긍정" else today_result.get("burnout_category", "정서적_고갈")
-    ai_message = feedback_gen.generate(category=category, user_text=today_diary.content or "", keywords=today_result.get("keywords", []))
     
+    # 감정 일치도 검사
+    emotion_match = None
+    if today_diary.keywords:
+        emotion_match = emotion_checker.check_match(today_diary.keywords, today_result)
+    
+    # 통계 인사이트
+    statistics_insight = insight_gen.generate(diary_analyses, request.history)
+    
+    # 피드백 생성
+    ai_message = feedback_gen.generate(
+        category=category,
+        user_text=today_diary.content or "",
+        keywords=today_result.get("keywords", [])
+    )
+    
+    if emotion_match and not emotion_match.is_matched and emotion_match.hidden_emotion_hint:
+        ai_message = f"{ai_message}\n\n{emotion_match.hidden_emotion_hint}"
+    
+    # 활동 추천
     recommendations = []
     if len(request.history) >= Config.MIN_DIARY_COUNT_FOR_RECOMMENDATION:
         recommendations = generate_recommendations(category, today_diary.content or "", today_result.get("keywords", []))
@@ -657,7 +192,9 @@ async def analyze_sync(request: AnalyzeRequest):
         emotion_probs=today_result["emotion_probs"],
         ai_message=ai_message,
         diary_analyses=diary_analyses,
-        recommendations=recommendations
+        recommendations=recommendations,
+        emotion_match=emotion_match,
+        statistics_insight=statistics_insight
     )
 
 
@@ -677,17 +214,7 @@ async def list_all_personas():
 
 @app.post("/config/activities")
 async def set_activity_ids(activities: Dict[str, List[int]]):
-    """
-    활동 ID 설정 (백엔드에서 호출)
-    
-    예시:
-    {
-        "REST": [1, 2, 3],
-        "VENTILATION": [4, 5, 6],
-        "SMALL_WIN": [7, 8, 9]
-    }
-    """
-    global ACTIVITY_CATEGORY_IDS
+    """활동 ID 설정"""
     for category, ids in activities.items():
         if category in ACTIVITY_CATEGORY_IDS:
             ACTIVITY_CATEGORY_IDS[category] = ids
@@ -699,6 +226,246 @@ async def get_activity_ids():
     """현재 활동 ID 조회"""
     return {"activities": ACTIVITY_CATEGORY_IDS}
 
+
+@app.get("/errors")
+async def list_error_codes():
+    """에러 코드 목록 조회"""
+    error_list = []
+    for code in ErrorCode:
+        definition = ERROR_DEFINITIONS.get(code, {})
+        error_list.append({
+            "code": code.value,
+            "name": code.name,
+            "message": definition.get("message", ""),
+            "recoverable": definition.get("recoverable", False)
+        })
+    
+    return {
+        "total": len(error_list),
+        "categories": {
+            "AI1xxx": "모델 관련 에러",
+            "AI2xxx": "입력 데이터 관련 에러",
+            "AI3xxx": "분석 처리 관련 에러",
+            "AI4xxx": "외부 통신 관련 에러",
+            "AI5xxx": "시스템 관련 에러"
+        },
+        "errors": error_list
+    }
+
+
+# ============================================
+# 백그라운드 처리 함수
+# ============================================
+
+async def process_analysis(diary_id: int, user_id: int, persona, history: List[DiaryHistory]):
+    """백그라운드 분석"""
+    errors: List[ErrorDetail] = []
+    fallback_used = False
+    
+    try:
+        print(f"분석 시작: diary_id={diary_id}, user_id={user_id}, persona={persona}")
+        
+        # 모델 로드 확인
+        if not analyzer or not analyzer._initialized:
+            raise AIServerException(ErrorCode.MODEL_NOT_LOADED)
+        
+        # 페르소나 설정
+        persona_type = PERSONA_MAP.get(persona)
+        if persona_type is None:
+            errors.append(create_error(ErrorCode.INVALID_PERSONA, f"'{persona}' -> 기본값 사용"))
+            persona_type = PersonaType.WARM_COUNSELOR
+        
+        feedback_gen.set_persona(persona_type)
+        emotion_checker.set_persona(persona_type)
+        insight_gen.set_persona(persona_type)
+        
+        # 모든 일기 분석
+        diary_analyses = []
+        for diary in history:
+            try:
+                result = analyzer.analyze(diary.content or "", diary.keywords or {})
+                diary_analyses.append(DiaryAnalysisResult(
+                    diary_id=diary.diary_id,
+                    primary_emotion=result["primary_emotion"],
+                    primary_score=round(result["primary_score"], 4),
+                    mbi_category=result["mbi_category"],
+                    keywords=result.get("keywords", [])
+                ))
+            except Exception as e:
+                errors.append(create_error(ErrorCode.ANALYSIS_FAILED, f"diary_id={diary.diary_id}: {str(e)}"))
+                diary_analyses.append(DiaryAnalysisResult(
+                    diary_id=diary.diary_id,
+                    primary_emotion="긍정",
+                    primary_score=0.5,
+                    mbi_category="NONE",
+                    keywords=[]
+                ))
+                fallback_used = True
+        
+        # 오늘 일기 분석
+        today_diary = history[0]
+        today_result = None
+        category = "긍정"
+        
+        try:
+            if today_diary.content and len(today_diary.content.strip()) < 10:
+                errors.append(create_error(ErrorCode.CONTENT_TOO_SHORT, f"내용 길이: {len(today_diary.content)}자"))
+            
+            today_result = analyzer.analyze(today_diary.content or "", today_diary.keywords or {})
+            category = "긍정" if today_result["primary_emotion"] == "긍정" else today_result.get("burnout_category", "정서적_고갈")
+        except Exception as e:
+            errors.append(create_error(ErrorCode.STAGE1_INFERENCE_FAILED, str(e)))
+            today_result = {
+                "primary_emotion": "긍정", "primary_score": 0.5, "mbi_category": "NONE",
+                "emotion_probs": {"긍정": 0.5, "부정": 0.5}, "keywords": []
+            }
+            fallback_used = True
+        
+        # 감정 일치도 검사
+        emotion_match = None
+        if today_diary.keywords:
+            try:
+                emotion_match = emotion_checker.check_match(today_diary.keywords, today_result)
+            except Exception as e:
+                errors.append(create_error(ErrorCode.EMOTION_MATCH_FAILED, str(e)))
+        
+        # 통계 인사이트 생성
+        statistics_insight = None
+        try:
+            statistics_insight = insight_gen.generate(diary_analyses, history)
+        except Exception as e:
+            errors.append(create_error(ErrorCode.INSIGHT_GENERATION_FAILED, str(e)))
+        
+        # 피드백 생성
+        ai_message = ""
+        try:
+            ai_message = feedback_gen.generate(
+                category=category,
+                user_text=today_diary.content or "",
+                keywords=today_result.get("keywords", [])
+            )
+            
+            if emotion_match and not emotion_match.is_matched and emotion_match.hidden_emotion_hint:
+                ai_message = f"{ai_message}\n\n{emotion_match.hidden_emotion_hint}"
+        except Exception as e:
+            errors.append(create_error(ErrorCode.FEEDBACK_GENERATION_FAILED, str(e), fallback_used=True))
+            ai_message = get_fallback_feedback(category)
+            fallback_used = True
+        
+        # 활동 추천
+        recommendations = []
+        if len(history) >= Config.MIN_DIARY_COUNT_FOR_RECOMMENDATION:
+            try:
+                recommendations = generate_recommendations(category, today_diary.content or "", today_result.get("keywords", []))
+            except Exception as e:
+                errors.append(create_error(ErrorCode.RECOMMENDATION_FAILED, str(e)))
+        
+        # 콜백 전송
+        callback_data = AnalysisCallback(
+            diary_id=diary_id,
+            primary_emotion=today_result["primary_emotion"],
+            primary_score=round(today_result["primary_score"], 4),
+            mbi_category=today_result["mbi_category"],
+            emotion_probs=today_result["emotion_probs"],
+            ai_message=ai_message,
+            diary_analyses=diary_analyses,
+            recommendations=recommendations,
+            emotion_match=emotion_match,
+            statistics_insight=statistics_insight,
+            success=True,
+            errors=errors,
+            fallback_used=fallback_used
+        )
+        
+        await send_callback(callback_data)
+        
+        print(f"분석 완료: diary_id={diary_id}, 일기수={len(diary_analyses)}, 추천수={len(recommendations)}, "
+              f"에러={len(errors)}건, 폴백={fallback_used}")
+        
+    except AIServerException as e:
+        print(f"분석 실패 (AI에러): diary_id={diary_id}, code={e.code}, message={e.message}")
+        errors.append(e.error)
+        
+        fail_callback = AnalysisCallback(
+            diary_id=diary_id,
+            primary_emotion="긍정",
+            primary_score=0.5,
+            mbi_category="NONE",
+            emotion_probs={"긍정": 0.5, "부정": 0.5},
+            ai_message=get_fallback_feedback("default"),
+            diary_analyses=[],
+            recommendations=[],
+            success=False,
+            errors=errors,
+            fallback_used=True
+        )
+        await send_callback(fail_callback)
+        
+    except Exception as e:
+        print(f"분석 실패 (내부오류): diary_id={diary_id}, error={e}")
+        import traceback
+        traceback.print_exc()
+        
+        errors.append(create_error(ErrorCode.INTERNAL_ERROR, str(e)))
+        
+        fail_callback = AnalysisCallback(
+            diary_id=diary_id,
+            primary_emotion="긍정",
+            primary_score=0.5,
+            mbi_category="NONE",
+            emotion_probs={"긍정": 0.5, "부정": 0.5},
+            ai_message=get_fallback_feedback("default"),
+            diary_analyses=[],
+            recommendations=[],
+            success=False,
+            errors=errors,
+            fallback_used=True
+        )
+        await send_callback(fail_callback)
+
+
+def generate_recommendations(category: str, user_text: str, keywords: List[str]) -> List[RecommendationItem]:
+    """활동 추천 생성"""
+    recommendations = []
+    
+    if category == "긍정" or category is None:
+        return recommendations
+    
+    activity_categories = BURNOUT_TO_ACTIVITY_CATEGORY.get(category, ["REST", "SMALL_WIN"])
+    
+    for act_category in activity_categories:
+        activity_ids = ACTIVITY_CATEGORY_IDS.get(act_category, [])
+        if activity_ids:
+            selected_id = random.choice(activity_ids)
+            activity_name = ACTIVITY_CONTENT.get(selected_id, "")
+            
+            ai_message = feedback_gen.generate(
+                category=category,
+                user_text=user_text,
+                keywords=keywords,
+                activity_name=activity_name
+            )
+            recommendations.append(RecommendationItem(activity_id=selected_id, ai_message=ai_message))
+    
+    return recommendations
+
+
+async def send_callback(data: AnalysisCallback):
+    """백엔드 콜백 전송"""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(Config.BACKEND_CALLBACK_URL, json=data.model_dump())
+            if response.status_code == 200:
+                print(f"콜백 성공: diary_id={data.diary_id}")
+            else:
+                print(f"콜백 실패: status={response.status_code}")
+    except Exception as e:
+        print(f"콜백 에러: {e}")
+
+
+# ============================================
+# 실행
+# ============================================
 
 if __name__ == "__main__":
     import uvicorn

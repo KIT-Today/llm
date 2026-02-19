@@ -453,8 +453,21 @@ def generate_recommendations(category: str, user_text: str, keywords: List[str])
 async def send_callback(data: AnalysisCallback):
     """백엔드 콜백 전송"""
     try:
+        # 백엔드 AIAnalysisResult 스키마에 맞는 필드만 전송
+        payload = {
+            "diary_id": data.diary_id,
+            "primary_emotion": data.primary_emotion,
+            "primary_score": data.primary_score,
+            "mbi_category": data.mbi_category,
+            "emotion_probs": data.emotion_probs,
+            "ai_message": data.ai_message,
+            "recommendations": [
+                {"activity_id": r.activity_id}
+                for r in data.recommendations
+            ],
+        }
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(Config.BACKEND_CALLBACK_URL, json=data.model_dump())
+            response = await client.post(Config.BACKEND_CALLBACK_URL, json=payload)
             if response.status_code == 200:
                 print(f"콜백 성공: diary_id={data.diary_id}")
             else:

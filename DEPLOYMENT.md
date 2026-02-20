@@ -66,15 +66,24 @@
 
 ### 파일 구조
 ```
-Burnout/
-├── ai_server.py          # 🔥 메인 서버 (FastAPI)
-├── prompts.py            # 페르소나 & 프롬프트 관리
-├── explainer.py          # XAI 모듈 (판단 근거 설명)
+llm/
+├── ai_server.py          # 🔥 메인 서버 (FastAPI, 엔드포인트 & 백그라운드 처리)
+├── config.py             # 환경변수 & 설정값
+├── constants.py          # 상수 & 매핑 테이블 (페르소나, 활동 ID 등)
+├── models.py             # Pydantic 요청/응답 모델
+├── analyzer.py           # KURE 임베딩 + 2단계 분류 엔진
+├── feedback.py           # 템플릿/LLM 피드백 생성기
+├── emotion_match.py      # 사용자 감정 vs AI 감정 일치도 검사
+├── insight.py            # 통계 인사이트 생성기
+├── error_codes.py        # 에러 코드 & 폴백 처리
+├── prompts.py            # 5가지 페르소나 정의 & 프롬프트 템플릿
+├── explainer.py          # XAI 모듈 (선택)
 ├── stage1_model.pt       # Stage 1 모델 (긍정/부정)
 ├── stage2_model.pt       # Stage 2 모델 (4개 카테고리)
 ├── requirements.txt      # 의존성 목록
 ├── .env.example          # 환경변수 예시
 ├── README.md             # 프로젝트 설명
+├── DEPLOYMENT.md         # 배포 & 운영 가이드 (이 파일)
 └── test_burnout_full.py  # CLI 테스트 도구
 ```
 
@@ -357,25 +366,19 @@ docker logs -f ai-server
 }
 ```
 
-#### `POST /test/feedback` - 피드백 테스트
-```
-// Query Parameters
-- category: 정서적_고갈, 좌절_압박, 부정적_대인관계, 자기비하, 긍정
-- text: 테스트할 텍스트
-- persona: warm_counselor, practical_advisor, friendly_buddy, calm_mentor, cheerful_supporter
-
-// Example
-POST /test/feedback?category=좌절_압박&text=상사가화를냈다&persona=friendly_buddy
-
+#### `GET /errors` - 에러 코드 목록
+```json
 // Response
 {
-  "category": "좌절_압박",
-  "persona": {
-    "type": "friendly_buddy",
-    "name": "친근한 친구",
-    "tone": "편하고 친근한"
+  "total": 15,
+  "categories": {
+    "AI1xxx": "모델 관련 에러",
+    "AI2xxx": "입력 데이터 관련 에러",
+    "AI3xxx": "분석 처리 관련 에러",
+    "AI4xxx": "외부 통신 관련 에러",
+    "AI5xxx": "시스템 관련 에러"
   },
-  "feedback": "헐, 진짜 열받았겠다. 나라도 화났을 듯."
+  "errors": [...]
 }
 ```
 
@@ -458,22 +461,35 @@ RuntimeError: CUDA out of memory
 CUDA_VISIBLE_DEVICES="" uvicorn ai_server:app --port 8001
 ```
 
-#### 4. 콜백 전송 실패
+#### 4. 콜백 연결 실패
 ```
-❌ 콜백 전송 에러: Connection refused
+콜백 연결 실패: diary_id=N, url=... (백엔드 서버 확인 필요)
 ```
 **해결**: 백엔드 서버가 실행 중인지, URL이 맞는지 확인
 ```bash
 curl http://백엔드URL/health  # 백엔드 상태 확인
+# .env의 BACKEND_CALLBACK_URL 값 확인
 ```
 
-#### 5. PowerShell에서 curl 에러
+#### 5. 콜백 status=500
+```
+콜백 실패: diary_id=N, status=500, body={"detail": "..."}
+```
+**해결**: `body` 내용으로 백엔드 오류 원인 파악
+- DB 컬럼 타입 불일치 예시: `mbi_category` 컬럼이 `VARCHAR(10)`인데 `"EMOTIONAL_EXHAUSTION"` (20자) 전송 시 발생
+  ```sql
+  -- 백엔드 DB에서 실행
+  ALTER TABLE emotion_analysis ALTER COLUMN mbi_category TYPE VARCHAR(30);
+  ```
+- 백엔드 서버 로그에서 상세 스택트레이스 확인
+
+#### 6. PowerShell에서 curl 에러
 ```
 Invoke-WebRequest : 매개 변수 이름 'X'과(와) 일치하는 매개 변수를 찾을 수 없습니다.
 ```
 **해결**: `curl.exe` 사용 또는 브라우저에서 `/docs` 접속
 ```powershell
-curl.exe -X POST "http://localhost:8001/test/feedback"
+curl.exe http://localhost:8001/health
 # 또는 브라우저에서 http://localhost:8001/docs
 ```
 
@@ -486,4 +502,4 @@ curl.exe -X POST "http://localhost:8001/test/feedback"
 
 ---
 
-*마지막 업데이트: 2026-01-30*
+*마지막 업데이트: 2026-02-20*

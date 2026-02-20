@@ -471,9 +471,13 @@ async def send_callback(data: AnalysisCallback):
             if response.status_code == 200:
                 print(f"콜백 성공: diary_id={data.diary_id}")
             else:
-                print(f"콜백 실패: status={response.status_code}")
+                print(f"콜백 실패: diary_id={data.diary_id}, status={response.status_code}, body={response.text}")
+    except httpx.TimeoutException:
+        print(f"콜백 타임아웃: diary_id={data.diary_id}, url={Config.BACKEND_CALLBACK_URL}")
+    except httpx.ConnectError:
+        print(f"콜백 연결 실패: diary_id={data.diary_id}, url={Config.BACKEND_CALLBACK_URL} (백엔드 서버 확인 필요)")
     except Exception as e:
-        print(f"콜백 에러: {e}")
+        print(f"콜백 에러: diary_id={data.diary_id}, error={type(e).__name__}: {e}")
 
 
 # ============================================

@@ -69,7 +69,7 @@ class AnalysisCallback(BaseModel):
     primary_emotion: str
     primary_score: float
     mbi_category: str
-    emotion_probs: Dict[str, float]
+    emotion_probs: Dict[str, Any]
     ai_message: str
     diary_analyses: List[DiaryAnalysisResult]
     recommendations: List[RecommendationItem]

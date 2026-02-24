@@ -82,10 +82,11 @@ KURE 기반 2단계 번아웃 감정 분류 + 5가지 페르소나 피드백 생
 - 불일치 시 힌트 메시지 제공
 
 ### 6. 통계 인사이트 (v2.1+)
-일기 3개 이상 시 자동 생성
+일기 3개 이상 시 자동 생성, `emotion_probs.statistics`에 포함되어 전송
 - 기간별 감정 빈도
 - 반복되는 상황 키워드
 - 번아웃 트렌드 분석
+- **MBI 카테고리별 비율** (`mbi_distribution`) 포함 (v2.4+)
 
 ---
 
@@ -192,7 +193,17 @@ curl http://localhost:8001/errors
   "mbi_category": "FRUSTRATION_PRESSURE",
   "emotion_probs": {
     "긍정": 0.08,
-    "부정": 0.92
+    "부정": 0.92,
+    "statistics": {
+      "period": "weekly",
+      "total_entries": 5,
+      "emotion_frequency": { "부정": 4, "긍정": 1 },
+      "burnout_trend": { "FRUSTRATION_PRESSURE": 3, "EMOTIONAL_EXHAUSTION": 1 },
+      "mbi_distribution": { "FRUSTRATION_PRESSURE": 0.75, "EMOTIONAL_EXHAUSTION": 0.25 },
+      "situation_frequency": { "사람 관계가 힘들어요": 3 },
+      "top_keywords": ["억울", "스트레스"],
+      "insight_messages": ["'사람 관계가 힘들어요'을(를) 3번이나 기록하셨네요."]
+    }
   },
   "ai_message": "헐, 진짜 열받았겠다. 나라도 화났을 듯.",
   "diary_analyses": [
@@ -217,20 +228,29 @@ curl http://localhost:8001/errors
     "match_score": 1.0,
     "hidden_emotion_hint": null
   },
-  "statistics_insight": {
-    "period": "weekly",
-    "total_entries": 5,
-    "emotion_frequency": {"부정": 4, "긍정": 1},
-    "situation_frequency": {"사람 관계가 힘들어요": 3},
-    "top_keywords": ["억울", "스트레스"],
-    "burnout_trend": {"FRUSTRATION_PRESSURE": 3},
-    "insight_messages": ["'사람 관계가 힘들어요'을(를) 3번이나 기록하셨네요..."]
-  },
   "success": true,
   "errors": [],
   "fallback_used": false
 }
 ```
+
+> **Note:** `emotion_probs.statistics`는 일기가 3개 이상일 때만 포함됩니다. 미만이면 `긍정`/`부정` 확률만 존재합니다.
+
+#### `emotion_probs` 필드 상세
+
+| 키 | 타입 | 설명 |
+|----|------|------|
+| `긍정` | `float` | 긍정 감정 확률 (0~1) |
+| `부정` | `float` | 부정 감정 확률 (0~1) |
+| `statistics` | `object` | 통계 인사이트 (일기 3개 이상 시) |
+| `statistics.period` | `string` | 분석 기간 (`weekly` \| `monthly`) |
+| `statistics.total_entries` | `int` | 분석된 일기 총 수 |
+| `statistics.emotion_frequency` | `object` | 감정별 등장 횟수 |
+| `statistics.burnout_trend` | `object` | MBI 카테고리별 등장 횟수 |
+| `statistics.mbi_distribution` | `object` | MBI 카테고리별 비율 (0~1) |
+| `statistics.situation_frequency` | `object` | 상황 키워드별 등장 횟수 |
+| `statistics.top_keywords` | `string[]` | 자주 등장한 감정 키워드 Top 5 |
+| `statistics.insight_messages` | `string[]` | 자동 생성된 인사이트 메시지 (최대 4개) |
 
 ### POST /analyze/sync
 동기 분석 (테스트용) - 콜백 없이 바로 결과 반환
@@ -358,6 +378,7 @@ USE_LLM=false
 
 | 버전 | 날짜 | 변경사항 |
 |------|------|----------|
+| v2.4 | 2026-02 | `emotion_probs`에 통계 인사이트 통합, MBI 분포 비율 추가 |
 | v2.3 | 2026-02 | 코드 분할 (모듈화) |
 | v2.2 | 2026-02 | 에러 코드 체계 추가 |
 | v2.1 | 2026-02 | 감정 일치도 검사, 통계 인사이트 추가 |

@@ -1,0 +1,161 @@
+# AI 서버 콜백 스키마 스니펫 (v2.4)
+# 백엔드 OpenAPI/Swagger 설정에 복사해서 사용하세요.
+#
+# 사용 예시 (Spring Boot):
+#   @Schema(implementation = AIAnalysisResult.class) 대신
+#   이 파일의 AIAnalysisCallback 스키마를 참고하세요.
+
+components:
+  schemas:
+
+    AIAnalysisCallback:
+      type: object
+      description: AI 서버가 분석 완료 후 백엔드로 전송하는 콜백 페이로드
+      required:
+        - diary_id
+        - primary_emotion
+        - primary_score
+        - mbi_category
+        - emotion_probs
+        - ai_message
+        - recommendations
+      properties:
+        diary_id:
+          type: integer
+          example: 123
+        primary_emotion:
+          type: string
+          description: 오늘 일기의 주 감정
+          enum: [긍정, 부정]
+          example: "부정"
+        primary_score:
+          type: number
+          format: float
+          description: 주 감정 신뢰도 (0~1)
+          example: 0.92
+        mbi_category:
+          type: string
+          description: MBI 번아웃 카테고리
+          enum:
+            - NONE
+            - EMOTIONAL_EXHAUSTION
+            - FRUSTRATION_PRESSURE
+            - NEGATIVE_RELATIONSHIP
+            - SELF_DEPRECATION
+          example: "FRUSTRATION_PRESSURE"
+        emotion_probs:
+          type: object
+          description: >
+            감정 확률 + 통계 인사이트 통합 필드.
+            긍정/부정 확률은 항상 포함되며,
+            일기가 3개 이상이면 statistics 키가 추가됩니다.
+          properties:
+            긍정:
+              type: number
+              format: float
+              description: 긍정 감정 확률 (0~1)
+              example: 0.08
+            부정:
+              type: number
+              format: float
+              description: 부정 감정 확률 (0~1)
+              example: 0.92
+            statistics:
+              $ref: '#/components/schemas/EmotionStatistics'
+          additionalProperties: true
+          example:
+            긍정: 0.08
+            부정: 0.92
+            statistics:
+              period: "weekly"
+              total_entries: 5
+              emotion_frequency:
+                부정: 4
+                긍정: 1
+              burnout_trend:
+                FRUSTRATION_PRESSURE: 3
+                EMOTIONAL_EXHAUSTION: 1
+              mbi_distribution:
+                FRUSTRATION_PRESSURE: 0.75
+                EMOTIONAL_EXHAUSTION: 0.25
+              situation_frequency:
+                "사람 관계가 힘들어요": 3
+              top_keywords: ["억울", "스트레스", "화남"]
+              insight_messages:
+                - "'사람 관계가 힘들어요'을(를) 3번이나 기록하셨네요."
+        ai_message:
+          type: string
+          description: 페르소나 기반 AI 피드백 메시지
+          example: "헐, 진짜 열받았겠다. 나라도 화났을 듯."
+        recommendations:
+          type: array
+          description: 추천 활동 목록 (일기 3개 이상일 때만 포함)
+          items:
+            type: object
+            required:
+              - activity_id
+            properties:
+              activity_id:
+                type: integer
+                description: 추천 활동 ID
+                example: 16
+
+    EmotionStatistics:
+      type: object
+      description: 기간별 감정 통계 인사이트 (일기 3개 이상 시 생성)
+      properties:
+        period:
+          type: string
+          enum: [weekly, monthly]
+          description: "분석 기간 (7일 이하: weekly, 초과: monthly)"
+          example: "weekly"
+        total_entries:
+          type: integer
+          description: 분석된 일기 총 수
+          example: 5
+        emotion_frequency:
+          type: object
+          description: 감정별 등장 횟수
+          additionalProperties:
+            type: integer
+          example:
+            부정: 4
+            긍정: 1
+        burnout_trend:
+          type: object
+          description: MBI 카테고리별 등장 횟수 (부정 감정만 집계)
+          additionalProperties:
+            type: integer
+          example:
+            FRUSTRATION_PRESSURE: 3
+            EMOTIONAL_EXHAUSTION: 1
+        mbi_distribution:
+          type: object
+          description: MBI 카테고리별 비율 (burnout_trend 건수 / total_entries, 0~1)
+          additionalProperties:
+            type: number
+            format: float
+          example:
+            FRUSTRATION_PRESSURE: 0.75
+            EMOTIONAL_EXHAUSTION: 0.25
+        situation_frequency:
+          type: object
+          description: 상황 키워드별 등장 횟수
+          additionalProperties:
+            type: integer
+          example:
+            "사람 관계가 힘들어요": 3
+        top_keywords:
+          type: array
+          description: 자주 등장한 감정 키워드 Top 5
+          items:
+            type: string
+          example: ["억울", "스트레스", "화남"]
+        insight_messages:
+          type: array
+          description: 자동 생성된 인사이트 메시지 (최대 4개)
+          items:
+            type: string
+          example:
+            - "'사람 관계가 힘들어요'을(를) 3번이나 기록하셨네요."
+            - "이번 기간 기록의 80%가 힘든 감정이었어요."

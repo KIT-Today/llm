@@ -9,6 +9,7 @@ POST /analyze : 분석 요청 -> 즉시 200 OK -> 백그라운드 분석 -> 콜�
 """
 
 import os
+import json
 import httpx
 import random
 from typing import List, Dict, Optional
@@ -453,13 +454,32 @@ def generate_recommendations(category: str, user_text: str, keywords: List[str])
 async def send_callback(data: AnalysisCallback):
     """백엔드 콜백 전송"""
     try:
-        # 백엔드 AIAnalysisResult 스키마에 맞는 필드만 전송
+        # emotion_probs에 기본 감정 확률 + 통계 인사이트 합산
+        emotion_probs: dict = dict(data.emotion_probs)
+        if data.statistics_insight:
+            si = data.statistics_insight
+            total = si.total_entries
+            burnout_trend = si.burnout_trend
+            emotion_probs["statistics"] = {
+                "period": si.period,
+                "total_entries": total,
+                "emotion_frequency": si.emotion_frequency,
+                "burnout_trend": burnout_trend,
+                "mbi_distribution": {
+                    cat: round(cnt / total, 4)
+                    for cat, cnt in burnout_trend.items()
+                },
+                "situation_frequency": si.situation_frequency,
+                "top_keywords": si.top_keywords,
+                "insight_messages": si.insight_messages,
+            }
+
         payload = {
             "diary_id": data.diary_id,
             "primary_emotion": data.primary_emotion,
             "primary_score": data.primary_score,
             "mbi_category": data.mbi_category,
-            "emotion_probs": data.emotion_probs,
+            "emotion_probs": emotion_probs,
             "ai_message": data.ai_message,
             "recommendations": [
                 {"activity_id": r.activity_id}
@@ -467,7 +487,11 @@ async def send_callback(data: AnalysisCallback):
             ],
         }
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(Config.BACKEND_CALLBACK_URL, json=payload)
+            response = await client.post(
+                Config.BACKEND_CALLBACK_URL,
+                content=json.dumps(payload, ensure_ascii=False),
+                headers={"Content-Type": "application/json"}
+            )
             if response.status_code == 200:
                 print(f"콜백 성공: diary_id={data.diary_id}")
             else:

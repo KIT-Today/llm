@@ -30,6 +30,7 @@ from constants import (
     BURNOUT_TO_ACTIVITY_CATEGORY,
     ACTIVITY_CATEGORY_IDS,
     ACTIVITY_CONTENT,
+    ACTIVITY_ATTRIBUTES,
 )
 from models import (
     AnalyzeRequest,
@@ -369,7 +370,7 @@ async def process_analysis(diary_id: int, user_id: int, persona, history: List[D
                     diary_id=diary.diary_id,
                     primary_emotion="긍정",
                     primary_score=0.5,
-                    mbi_category="NONE",
+                    mbi_category="NORMAL",
                     keywords=[]
                 ))
                 fallback_used = True
@@ -388,7 +389,7 @@ async def process_analysis(diary_id: int, user_id: int, persona, history: List[D
         except Exception as e:
             errors.append(create_error(ErrorCode.STAGE1_INFERENCE_FAILED, str(e)))
             today_result = {
-                "primary_emotion": "긍정", "primary_score": 0.5, "mbi_category": "NONE",
+                "primary_emotion": "긍정", "primary_score": 0.5, "mbi_category": "NORMAL",
                 "emotion_probs": {"긍정": 0.5, "부정": 0.5}, "keywords": []
             }
             fallback_used = True
@@ -462,7 +463,7 @@ async def process_analysis(diary_id: int, user_id: int, persona, history: List[D
             diary_id=diary_id,
             primary_emotion="긍정",
             primary_score=0.5,
-            mbi_category="NONE",
+            mbi_category="NORMAL",
             emotion_probs={"긍정": 0.5, "부정": 0.5},
             ai_message=get_fallback_feedback("default"),
             diary_analyses=[],
@@ -484,7 +485,7 @@ async def process_analysis(diary_id: int, user_id: int, persona, history: List[D
             diary_id=diary_id,
             primary_emotion="긍정",
             primary_score=0.5,
-            mbi_category="NONE",
+            mbi_category="NORMAL",
             emotion_probs={"긍정": 0.5, "부정": 0.5},
             ai_message=get_fallback_feedback("default"),
             diary_analyses=[],
@@ -499,26 +500,31 @@ async def process_analysis(diary_id: int, user_id: int, persona, history: List[D
 def generate_recommendations(category: str, user_text: str, keywords: List[str]) -> List[RecommendationItem]:
     """활동 추천 생성"""
     recommendations = []
-    
+
     if category == "긍정" or category is None:
         return recommendations
-    
+
     activity_categories = BURNOUT_TO_ACTIVITY_CATEGORY.get(category, ["REST", "SMALL_WIN"])
-    
-    for act_category in activity_categories:
-        activity_ids = ACTIVITY_CATEGORY_IDS.get(act_category, [])
+
+    for act_cat in activity_categories:
+        activity_ids = ACTIVITY_CATEGORY_IDS.get(act_cat, [])
         if activity_ids:
             selected_id = random.choice(activity_ids)
-            activity_name = ACTIVITY_CONTENT.get(selected_id, "")
-            
-            ai_message = feedback_gen.generate(
-                category=category,
-                user_text=user_text,
-                keywords=keywords,
-                activity_name=activity_name
-            )
-            recommendations.append(RecommendationItem(activity_id=selected_id, ai_message=ai_message))
-    
+            act_content = ACTIVITY_CONTENT.get(selected_id, "")
+            attrs = ACTIVITY_ATTRIBUTES.get(selected_id, {
+                "act_category": act_cat,
+                "is_active": False,
+                "is_outdoor": False,
+                "is_social": False,
+            })
+            recommendations.append(RecommendationItem(
+                act_content=act_content,
+                act_category=attrs["act_category"],
+                is_active=attrs["is_active"],
+                is_outdoor=attrs["is_outdoor"],
+                is_social=attrs["is_social"],
+            ))
+
     return recommendations
 
 
@@ -553,7 +559,13 @@ async def send_callback(data: AnalysisCallback):
             "emotion_probs": emotion_probs,
             "ai_message": data.ai_message,
             "recommendations": [
-                {"activity_id": r.activity_id}
+                {
+                    "act_content": r.act_content,
+                    "act_category": r.act_category,
+                    "is_active": r.is_active,
+                    "is_outdoor": r.is_outdoor,
+                    "is_social": r.is_social,
+                }
                 for r in data.recommendations
             ],
         }

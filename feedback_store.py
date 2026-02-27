@@ -22,7 +22,7 @@ from config import Config
 # 상수
 # ============================================
 
-VALID_MBI_CATEGORIES = {"정서적_고갈", "좌절_압박", "부정적_대인관계", "자기비하", "NONE"}
+VALID_MBI_CATEGORIES = {"정서적_고갈", "좌절_압박", "부정적_대인관계", "자기비하", "NORMAL"}
 
 CSV_HEADER = [
     "received_at",            # AI 서버가 배치를 수신한 시각

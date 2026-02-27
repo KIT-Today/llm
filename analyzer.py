@@ -123,22 +123,22 @@ class BurnoutAnalyzer:
             return {
                 "primary_emotion": "긍정",
                 "primary_score": 0.5,
-                "mbi_category": "NONE",
+                "mbi_category": "NORMAL",
                 "emotion_probs": {"긍정": 0.5, "부정": 0.5},
                 "burnout_category": None,
                 "keywords": []
             }
-        
+
         # Stage 1: 긍정/부정
         s1_pred, s1_probs = self.predict_stage1(analysis_text)
         primary_emotion = STAGE1_CATEGORIES[s1_pred]
-        
+
         result = {
             "primary_emotion": primary_emotion,
             "primary_score": float(s1_probs[s1_pred]),
             "emotion_probs": {"긍정": float(s1_probs[0]), "부정": float(s1_probs[1])},
             "burnout_category": None,
-            "mbi_category": "NONE",
+            "mbi_category": "NORMAL",   # Stage 1 긍정 → NORMAL, Stage 2 부정 → 한국어 카테고리
             "keywords": []
         }
         
@@ -147,7 +147,7 @@ class BurnoutAnalyzer:
             s2_pred, s2_probs = self.predict_stage2(analysis_text)
             burnout_category = STAGE2_CATEGORIES[s2_pred]
             result["burnout_category"] = burnout_category
-            result["mbi_category"] = MBI_CATEGORY_MAP[burnout_category]
+            result["mbi_category"] = burnout_category  # 한국어 카테고리 그대로 전송 (백엔드가 EE/DP/PA로 변환)
             result["keywords"] = self.extract_keywords(analysis_text, burnout_category)
         
         return result

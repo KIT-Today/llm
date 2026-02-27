@@ -30,8 +30,11 @@ class AnalyzeRequest(BaseModel):
 
 class RecommendationItem(BaseModel):
     """활동 추천 항목"""
-    activity_id: int
-    ai_message: str
+    act_content: str       # 활동 내용 (예: "따뜻한 차/코코아 한 잔 마시기")
+    act_category: str      # 활동 카테고리: REST / VENTILATION / SMALL_WIN
+    is_active: bool        # 신체 활동 여부
+    is_outdoor: bool       # 야외 활동 여부
+    is_social: bool        # 사회적 교류 여부
 
 
 class DiaryAnalysisResult(BaseModel):

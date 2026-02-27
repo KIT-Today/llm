@@ -157,7 +157,109 @@ Drive에 이미 존재하는 v3 CSV 위치(`{DATA_PATH}/`)와 노트북이 찾�
 
 ---
 
+---
+
+## 2026-02-27 추가 변경사항 (v2.5)
+
+### recommendations 형식 + mbi_category 한국어 통일
+
+백엔드 확인 완료 후 반영. 백엔드 DB가 AI 서버 전송 형식에 맞춰 변경하기로 결정.
+
+#### 수정: `constants.py`
+- `ACTIVITY_ATTRIBUTES` 딕셔너리 추가 (45개 활동 전체)
+  - `act_category`: `REST` / `VENTILATION` / `SMALL_WIN`
+  - `is_active`: 신체 활동 여부
+  - `is_outdoor`: 야외 활동 여부
+  - `is_social`: 사회적 교류 여부
+
+#### 수정: `models.py`
+- `RecommendationItem` 필드 교체
+
+| 이전 | 이후 |
+|------|------|
+| `activity_id: int` | `act_content: str` |
+| `ai_message: str` | `act_category: str` |
+| | `is_active: bool` |
+| | `is_outdoor: bool` |
+| | `is_social: bool` |
+
+#### 수정: `ai_server.py` (v2.4 → v2.5)
+- `ACTIVITY_ATTRIBUTES` import 추가
+- `generate_recommendations()`: 활동 속성 조회 후 `RecommendationItem` 빌드 방식 변경
+- `send_callback()`: recommendations 직렬화 형식 변경
+
+#### 수정: `analyzer.py`
+- `mbi_category` 반환값을 영문(`EMOTIONAL_EXHAUSTION` 등) → **한국어** (`정서적_고갈` 등)로 변경
+  - 백엔드가 한국어 수신 후 자체 변환하여 DB에 저장
+
+---
+
+### 확정된 콜백 API 명세 (`POST /diaries/analysis-callback`)
+
+AI 서버 → 백엔드 전송 페이로드:
+
+```json
+{
+  "diary_id": 1,
+  "primary_emotion": "부정",
+  "primary_score": 0.8732,
+  "mbi_category": "정서적_고갈",   // 긍정이면 "NORMAL"
+  "emotion_probs": {
+    "긍정": 0.1268,
+    "부정": 0.8732,
+    "statistics": {
+      "period": "최근 30일",
+      "total_entries": 5,
+      "emotion_frequency": {"긍정": 1, "부정": 4},
+      "burnout_trend": {"정서적_고갈": 3, "좌절_압박": 1},
+      "mbi_distribution": {"정서적_고갈": 0.6, "좌절_압박": 0.2},
+      "situation_frequency": {},
+      "top_keywords": ["지치", "무기력", "피곤"],
+      "insight_messages": ["최근 30일간 부정 감정이 80.0%를 차지합니다."]
+    }
+  },
+  "ai_message": "오늘 많이 지치셨군요...",
+  "recommendations": [
+    {
+      "act_content": "따뜻한 차/코코아 한 잔 마시기",
+      "act_category": "REST",
+      "is_active": false,
+      "is_outdoor": false,
+      "is_social": false
+    },
+    {
+      "act_content": "일어나자마자 이불 개기",
+      "act_category": "SMALL_WIN",
+      "is_active": true,
+      "is_outdoor": false,
+      "is_social": false
+    }
+  ]
+}
+```
+
+#### mbi_category 값 목록
+| 값 | 의미 |
+|----|------|
+| `NORMAL` | 긍정 (번아웃 없음) |
+| `정서적_고갈` | Emotional Exhaustion |
+| `좌절_압박` | Frustration / Pressure |
+| `부정적_대인관계` | Negative Relationship |
+| `자기비하` | Self-Deprecation |
+
+#### act_category 값 목록
+| 값 | 활동 ID 범위 | 설명 |
+|----|-------------|------|
+| `REST` | 1~15 | 휴식·이완 활동 |
+| `VENTILATION` | 16~30 | 발산·해소 활동 |
+| `SMALL_WIN` | 31~45 | 작은 성취 활동 |
+
+> ⚠️ `statistics` 필드는 일기 3개 이상일 때만 포함 (`MIN_DIARY_COUNT_FOR_INSIGHT` 설정)
+> ⚠️ `recommendations`는 일기 3개 이상일 때만 포함 (`MIN_DIARY_COUNT_FOR_RECOMMENDATION` 설정)
+
+---
+
 ## 변경되지 않은 것
 
-- `analyzer.py`, `feedback.py`, `emotion_match.py`, `insight.py` 등 — 미변경
+- `feedback.py`, `emotion_match.py`, `insight.py` 등 — 미변경
 - 학습 로직, 모델 아키텍처, 하이퍼파라미터 — 미변경

@@ -92,6 +92,66 @@ ACTIVITY_CONTENT = {
 
 
 # ============================================
+# 활동 속성 매핑 (백엔드 콜백용)
+# act_category: REST / VENTILATION / SMALL_WIN
+# is_active  : 신체 활동 여부
+# is_outdoor : 야외 활동 여부
+# is_social  : 사회적 교류 여부
+# ============================================
+
+ACTIVITY_ATTRIBUTES = {
+    # ── REST (1~15) ──────────────────────────────────────
+    1:  {"act_category": "REST", "is_active": False, "is_outdoor": False, "is_social": False},
+    2:  {"act_category": "REST", "is_active": False, "is_outdoor": False, "is_social": False},
+    3:  {"act_category": "REST", "is_active": False, "is_outdoor": False, "is_social": False},
+    4:  {"act_category": "REST", "is_active": False, "is_outdoor": False, "is_social": False},
+    5:  {"act_category": "REST", "is_active": False, "is_outdoor": False, "is_social": False},
+    6:  {"act_category": "REST", "is_active": False, "is_outdoor": False, "is_social": False},
+    7:  {"act_category": "REST", "is_active": False, "is_outdoor": False, "is_social": False},
+    8:  {"act_category": "REST", "is_active": False, "is_outdoor": False, "is_social": False},
+    9:  {"act_category": "REST", "is_active": False, "is_outdoor": True,  "is_social": False},
+    10: {"act_category": "REST", "is_active": False, "is_outdoor": False, "is_social": False},
+    11: {"act_category": "REST", "is_active": True,  "is_outdoor": True,  "is_social": False},
+    12: {"act_category": "REST", "is_active": True,  "is_outdoor": True,  "is_social": False},
+    13: {"act_category": "REST", "is_active": False, "is_outdoor": False, "is_social": False},
+    14: {"act_category": "REST", "is_active": False, "is_outdoor": False, "is_social": False},
+    15: {"act_category": "REST", "is_active": False, "is_outdoor": False, "is_social": False},
+    # ── VENTILATION (16~30) ──────────────────────────────
+    16: {"act_category": "VENTILATION", "is_active": True,  "is_outdoor": False, "is_social": False},
+    17: {"act_category": "VENTILATION", "is_active": True,  "is_outdoor": False, "is_social": False},
+    18: {"act_category": "VENTILATION", "is_active": False, "is_outdoor": False, "is_social": False},
+    19: {"act_category": "VENTILATION", "is_active": False, "is_outdoor": False, "is_social": False},
+    20: {"act_category": "VENTILATION", "is_active": False, "is_outdoor": False, "is_social": False},
+    21: {"act_category": "VENTILATION", "is_active": True,  "is_outdoor": False, "is_social": False},
+    22: {"act_category": "VENTILATION", "is_active": True,  "is_outdoor": True,  "is_social": False},
+    23: {"act_category": "VENTILATION", "is_active": False, "is_outdoor": False, "is_social": False},
+    24: {"act_category": "VENTILATION", "is_active": True,  "is_outdoor": False, "is_social": False},
+    25: {"act_category": "VENTILATION", "is_active": False, "is_outdoor": False, "is_social": True},
+    26: {"act_category": "VENTILATION", "is_active": False, "is_outdoor": True,  "is_social": False},
+    27: {"act_category": "VENTILATION", "is_active": True,  "is_outdoor": False, "is_social": False},
+    28: {"act_category": "VENTILATION", "is_active": False, "is_outdoor": False, "is_social": False},
+    29: {"act_category": "VENTILATION", "is_active": False, "is_outdoor": False, "is_social": False},
+    30: {"act_category": "VENTILATION", "is_active": False, "is_outdoor": False, "is_social": False},
+    # ── SMALL_WIN (31~45) ────────────────────────────────
+    31: {"act_category": "SMALL_WIN", "is_active": True,  "is_outdoor": False, "is_social": False},
+    32: {"act_category": "SMALL_WIN", "is_active": False, "is_outdoor": False, "is_social": False},
+    33: {"act_category": "SMALL_WIN", "is_active": True,  "is_outdoor": False, "is_social": False},
+    34: {"act_category": "SMALL_WIN", "is_active": False, "is_outdoor": False, "is_social": False},
+    35: {"act_category": "SMALL_WIN", "is_active": False, "is_outdoor": False, "is_social": False},
+    36: {"act_category": "SMALL_WIN", "is_active": False, "is_outdoor": False, "is_social": False},
+    37: {"act_category": "SMALL_WIN", "is_active": True,  "is_outdoor": False, "is_social": False},
+    38: {"act_category": "SMALL_WIN", "is_active": True,  "is_outdoor": False, "is_social": False},
+    39: {"act_category": "SMALL_WIN", "is_active": False, "is_outdoor": True,  "is_social": False},
+    40: {"act_category": "SMALL_WIN", "is_active": False, "is_outdoor": True,  "is_social": False},
+    41: {"act_category": "SMALL_WIN", "is_active": True,  "is_outdoor": False, "is_social": False},
+    42: {"act_category": "SMALL_WIN", "is_active": False, "is_outdoor": False, "is_social": False},
+    43: {"act_category": "SMALL_WIN", "is_active": False, "is_outdoor": False, "is_social": False},
+    44: {"act_category": "SMALL_WIN", "is_active": False, "is_outdoor": True,  "is_social": False},
+    45: {"act_category": "SMALL_WIN", "is_active": False, "is_outdoor": False, "is_social": False},
+}
+
+
+# ============================================
 # 감정 키워드 매핑
 # ============================================
 

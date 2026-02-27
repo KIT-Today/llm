@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-번아웃 감지 AI 서버 v2.3
+번아웃 감지 AI 서버 v2.4
 =======================
 
-POST /analyze : 분석 요청 -> 즉시 200 OK -> 백그라운드 분석 -> 콜백
+POST /analyze         : 분석 요청 -> 즉시 200 OK -> 백그라운드 분석 -> 콜백
+POST /feedback/batch  : 백엔드 2주 배치 피드백 수신 및 CSV 저장
+GET  /feedback/stats  : 누적 피드백 통계 조회
 
 실행: uvicorn ai_server:app --reload --port 8001
 """
@@ -35,7 +37,10 @@ from models import (
     DiaryHistory,
     DiaryAnalysisResult,
     RecommendationItem,
+    FeedbackBatchRequest,
+    FeedbackBatchResponse,
 )
+from feedback_store import FeedbackStore, VALID_MBI_CATEGORIES
 from analyzer import BurnoutAnalyzer
 from feedback import FeedbackGenerator
 from emotion_match import EmotionMatchChecker
@@ -59,6 +64,7 @@ analyzer: Optional[BurnoutAnalyzer] = None
 feedback_gen: Optional[FeedbackGenerator] = None
 emotion_checker: Optional[EmotionMatchChecker] = None
 insight_gen: Optional[StatisticsInsightGenerator] = None
+feedback_store: Optional[FeedbackStore] = None
 
 
 # ============================================
@@ -67,18 +73,19 @@ insight_gen: Optional[StatisticsInsightGenerator] = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global analyzer, feedback_gen, emotion_checker, insight_gen
-    
+    global analyzer, feedback_gen, emotion_checker, insight_gen, feedback_store
+
     analyzer = BurnoutAnalyzer()
     analyzer.initialize()
-    
+
     use_llm = os.getenv("USE_LLM", "false").lower() == "true"
     print(f"피드백 모드: {'LLM (KoAlpaca)' if use_llm else '템플릿'}")
-    
+
     feedback_gen = FeedbackGenerator(use_llm=use_llm)
     emotion_checker = EmotionMatchChecker()
     insight_gen = StatisticsInsightGenerator()
-    
+    feedback_store = FeedbackStore()
+
     yield
     print("서버 종료")
 
@@ -86,7 +93,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="번아웃 감지 AI 서버",
     description="한국형 번아웃 감정 분석 API",
-    version="2.3.0",
+    version="2.4.0",
     lifespan=lifespan
 )
 
@@ -108,11 +115,72 @@ async def root():
     return {
         "status": "running",
         "service": "Burnout Detection AI Server",
-        "version": "2.3.0",
+        "version": "2.4.0",
         "device": Config.DEVICE,
         "model_loaded": analyzer is not None and analyzer._initialized,
-        "features": ["emotion_analysis", "emotion_match_check", "statistics_insight", "activity_recommendation"]
+        "features": [
+            "emotion_analysis",
+            "emotion_match_check",
+            "statistics_insight",
+            "activity_recommendation",
+            "user_feedback",
+        ],
     }
+
+
+@app.post("/feedback/batch", response_model=FeedbackBatchResponse)
+async def receive_feedback_batch(request: FeedbackBatchRequest):
+    """
+    백엔드 2주 배치 피드백 수신
+
+    백엔드가 2주마다 누적된 설문 응답을 일괄 전송합니다.
+    - period_start / period_end : 해당 배치 기간
+    - records : 기간 내 전체 피드백 레코드 목록
+      - predicted_mbi_category : AI가 예측한 카테고리
+      - is_correct             : 사용자 정오 확인
+      - satisfaction_score     : 만족도 1~5
+      - user_mbi_category      : 틀렸을 때 사용자가 선택한 카테고리 (nullable)
+    """
+    if not request.records:
+        raise HTTPException(status_code=400, detail="records가 비어있습니다.")
+
+    # 레코드별 유효성 검증
+    for i, rec in enumerate(request.records):
+        if not (1 <= rec.satisfaction_score <= 5):
+            raise HTTPException(
+                status_code=400,
+                detail=f"records[{i}].satisfaction_score는 1~5 사이여야 합니다."
+            )
+        if rec.user_mbi_category and rec.user_mbi_category not in VALID_MBI_CATEGORIES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"records[{i}].user_mbi_category 유효하지 않음: {rec.user_mbi_category}"
+            )
+
+    result = feedback_store.save_batch(
+        period_start=request.period_start,
+        period_end=request.period_end,
+        records=[rec.model_dump() for rec in request.records],
+    )
+
+    return FeedbackBatchResponse(
+        status="saved",
+        received=result["received"],
+        total_accumulated=result["total_accumulated"],
+        model_accuracy=result["model_accuracy"],
+        category_corrections=result["category_corrections"],
+    )
+
+
+@app.get("/feedback/stats")
+async def get_feedback_stats():
+    """
+    누적 피드백 통계 조회
+
+    카테고리별 오답 분포와 전체 모델 정확도를 확인합니다.
+    재학습 방향 결정에 활용하세요.
+    """
+    return feedback_store.get_stats()
 
 
 @app.get("/health")

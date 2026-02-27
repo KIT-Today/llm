@@ -374,6 +374,79 @@ USE_LLM=false
 
 ---
 
+## 모델 학습 노트북
+
+> Colab 환경에서 실행. Google Drive 마운트 필요.
+
+### 학습 순서
+
+```
+1. KURE_Burnout_2Stage_v3.ipynb   → stage1/2_model_v3.pt 생성
+2. KURE_Burnout_FineTune_v1.ipynb → stage1/2_model_v3_ft.pt 생성 (선택)
+```
+
+### Drive 폴더 구조
+
+```
+MyDrive/Burnout/
+├── dataset/
+│   ├── processed/
+│   │   ├── burnout_train_v2.csv
+│   │   └── burnout_val_v2.csv
+│   ├── 018.감성대화/
+│   ├── 웰니스 대화 스크립트 데이터셋/
+│   │   └── 웰니스_대화_스크립트_데이터셋.xlsx
+│   └── 한국어 감정 정보가 포함된 연속적 대화 데이터셋/
+│       └── 한국어_연속적_대화_데이터셋.xlsx
+├── stage1_train_v3.csv  ← v3 노트북 실행 후 생성
+├── stage1_val_v3.csv
+├── stage2_train_v3.csv
+├── stage2_val_v3.csv
+├── stage1_model_v3.pt
+├── stage2_model_v3.pt
+├── stage1_model_v3_ft.pt  ← FineTune 실행 후 생성
+└── stage2_model_v3_ft.pt
+```
+
+### 노트북 개요
+
+| 노트북 | 역할 | KURE | 예상 소요시간 |
+|--------|------|------|--------------|
+| `KURE_Burnout_2Stage_v3.ipynb` | 데이터 통합 + 2단계 분류 학습 | 완전 동결 (임베딩 사전계산) | ~30분 |
+| `KURE_Burnout_FineTune_v1.ipynb` | KURE 상위 3레이어 해제 + 재학습 | 상위 3레이어 해제 | ~2~3시간 |
+
+### v3 데이터셋 구성
+
+| 데이터셋 | 샘플 수 | 역할 |
+|---------|--------|------|
+| AI Hub 감성대화 말뭉치 | ~36,000 | Stage 1+2 기반 데이터 |
+| 웰니스 대화 스크립트 | ~3,500 | 상담 맥락, 도메인 갭 완화 |
+| 한국어 연속적 대화 (세션 병합) | ~650 | 일기 유사 복합 텍스트 |
+| **총합** | **~40,000+** | |
+
+### 목표 성능
+
+| 모델 | Stage 1 (긍정/부정) | Stage 2 (4 카테고리) |
+|------|-------------------|-------------------|
+| v2 (현 서버) | 88% | 47.8% |
+| v3 (Frozen) | 88~92% 목표 | 55~65% 목표 |
+| v3_ft (FineTuned) | 유지 | 추가 향상 기대 |
+
+### 서버 적용 방법
+
+학습 완료된 `.pt` 파일을 `llm/` 루트에 복사 후 파일명 변경:
+```bash
+# v3 적용
+cp stage1_model_v3.pt stage1_model.pt
+cp stage2_model_v3.pt stage2_model.pt
+
+# v3_ft 적용 (FineTune 버전)
+# ⚠️ FineTunedBurnoutClassifier 아키텍처 변경으로 analyzer.py 수정 필요
+# → 현재는 v3 frozen 버전 사용 권장
+```
+
+---
+
 ## 버전 히스토리
 
 | 버전 | 날짜 | 변경사항 |

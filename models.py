@@ -30,11 +30,12 @@ class AnalyzeRequest(BaseModel):
 
 class RecommendationItem(BaseModel):
     """활동 추천 항목"""
-    act_content: str       # 활동 내용 (예: "따뜻한 차/코코아 한 잔 마시기")
-    act_category: str      # 활동 카테고리: REST / VENTILATION / SMALL_WIN
-    is_active: bool        # 신체 활동 여부
-    is_outdoor: bool       # 야외 활동 여부
-    is_social: bool        # 사회적 교류 여부
+    act_content: str            # 활동 내용 (예: "따뜻한 차/코코아 한 잔 마시기")
+    act_category: str           # 활동 카테고리: REST / VENTILATION / SMALL_WIN
+    is_active: bool             # 신체 활동 여부
+    is_outdoor: bool            # 야외 활동 여부
+    is_social: bool             # 사회적 교류 여부
+    ai_message: str = ""        # AI 추천 멘트 (LLM 사용 시 개인화, 템플릿 모드 시 빈 문자열)
 
 
 class DiaryAnalysisResult(BaseModel):

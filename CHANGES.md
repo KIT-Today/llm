@@ -135,15 +135,15 @@ Drive에 이미 존재하는 v3 CSV 위치(`{DATA_PATH}/`)와 노트북이 찾�
   "period_end":   "2026-02-14",
   "records": [
     {
-      "predicted_mbi_category": "EE",
+      "predicted_mbi_category": "정서적_고갈",
       "is_correct": false,
       "satisfaction_score": 3,
-      "user_mbi_category": "DP"
+      "user_mbi_category": "자기비하"
     }
   ]
 }
 ```
-> ⚠️ `predicted_mbi_category` / `user_mbi_category` 값 형식(EE/DP/PA vs 한국어)은 백엔드와 협의 필요
+> `predicted_mbi_category` / `user_mbi_category` 값: **한국어 확정** (`NORMAL` / `정서적_고갈` / `좌절_압박` / `부정적_대인관계` / `자기비하`)
 
 #### 백엔드 신규 테이블 제안: `FeedbackSurveys`
 | 컬럼 | 타입 | 설명 |
@@ -225,14 +225,16 @@ AI 서버 → 백엔드 전송 페이로드:
       "act_category": "REST",
       "is_active": false,
       "is_outdoor": false,
-      "is_social": false
+      "is_social": false,
+      "ai_message": "지금처럼 지칠 때일수록 잠깐 몸을 따뜻하게 해주는 게 도움돼요."
     },
     {
       "act_content": "일어나자마자 이불 개기",
       "act_category": "SMALL_WIN",
       "is_active": true,
       "is_outdoor": false,
-      "is_social": false
+      "is_social": false,
+      "ai_message": "작은 것 하나 완성하는 것만으로도 하루가 달라질 수 있어요."
     }
   ]
 }
@@ -254,8 +256,15 @@ AI 서버 → 백엔드 전송 페이로드:
 | `VENTILATION` | 16~30 | 발산·해소 활동 |
 | `SMALL_WIN` | 31~45 | 작은 성취 활동 |
 
+#### ai_message (recommendations 내)
+| 조건 | 값 |
+|------|-----|
+| `USE_LLM=true` | LLM이 사용자 텍스트·번아웃 카테고리 기반으로 개인화된 멘트 생성 |
+| `USE_LLM=false` (기본) | `""` (빈 문자열) |
+
 > ⚠️ `statistics` 필드는 일기 3개 이상일 때만 포함 (`MIN_DIARY_COUNT_FOR_INSIGHT` 설정)
 > ⚠️ `recommendations`는 일기 3개 이상일 때만 포함 (`MIN_DIARY_COUNT_FOR_RECOMMENDATION` 설정)
+> ⚠️ `recommendations[].ai_message`는 LLM 비활성화 시 빈 문자열 — 프론트에서 빈 문자열 처리 필요
 
 ---
 

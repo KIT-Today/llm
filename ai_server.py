@@ -498,7 +498,11 @@ async def process_analysis(diary_id: int, user_id: int, persona, history: List[D
 
 
 def generate_recommendations(category: str, user_text: str, keywords: List[str]) -> List[RecommendationItem]:
-    """활동 추천 생성"""
+    """활동 추천 생성
+
+    LLM 모드(USE_LLM=true)일 때 각 추천 항목에 개인화된 ai_message 생성.
+    템플릿 모드일 때 ai_message는 빈 문자열.
+    """
     recommendations = []
 
     if category == "긍정" or category is None:
@@ -517,12 +521,27 @@ def generate_recommendations(category: str, user_text: str, keywords: List[str])
                 "is_outdoor": False,
                 "is_social": False,
             })
+
+            # LLM 사용 시: 활동명을 프롬프트에 넣어 개인화된 추천 멘트 생성
+            ai_message = ""
+            if feedback_gen and feedback_gen.use_llm:
+                try:
+                    ai_message = feedback_gen.generate(
+                        category=category,
+                        user_text=user_text,
+                        keywords=keywords,
+                        activity_name=act_content,
+                    )
+                except Exception:
+                    ai_message = ""
+
             recommendations.append(RecommendationItem(
                 act_content=act_content,
                 act_category=attrs["act_category"],
                 is_active=attrs["is_active"],
                 is_outdoor=attrs["is_outdoor"],
                 is_social=attrs["is_social"],
+                ai_message=ai_message,
             ))
 
     return recommendations
@@ -565,6 +584,7 @@ async def send_callback(data: AnalysisCallback):
                     "is_active": r.is_active,
                     "is_outdoor": r.is_outdoor,
                     "is_social": r.is_social,
+                    "ai_message": r.ai_message,
                 }
                 for r in data.recommendations
             ],

@@ -30,8 +30,11 @@ class AnalyzeRequest(BaseModel):
 
 class RecommendationItem(BaseModel):
     """활동 추천 항목"""
-    activity_id: int
-    ai_message: str
+    act_content: str       # 활동 내용 (예: "따뜻한 차/코코아 한 잔 마시기")
+    act_category: str      # 활동 카테고리: REST / VENTILATION / SMALL_WIN
+    is_active: bool        # 신체 활동 여부
+    is_outdoor: bool       # 야외 활동 여부
+    is_social: bool        # 사회적 교류 여부
 
 
 class DiaryAnalysisResult(BaseModel):
@@ -52,6 +55,26 @@ class EmotionMatchResult(BaseModel):
     hidden_emotion_hint: Optional[str] = None
 
 
+class MBIRiskItem(BaseModel):
+    """MBI 단일 요소 위험도"""
+    ratio: float                  # 현재 비율 (0.0 ~ 1.0)
+    threshold: float              # 논문 기준 컷오프
+    is_risk: bool                 # 위험군 여부
+    contributing: List[str]       # 기여한 4카테고리 목록
+
+
+class MBIAssessment(BaseModel):
+    """
+    MBI 3요소 위험도 평가
+    근거: Lee et al. (2017) MBI 절단점 + Maslach & Jackson (1981) 정의
+    4카테고리 → MBI 3요소 해석 레이어 (한국형 세분화 역매핑)
+    """
+    EE: MBIRiskItem   # 정서적 고갈 (Emotional Exhaustion)
+    DP: MBIRiskItem   # 비인격화 (Depersonalization)
+    PA: MBIRiskItem   # 자아 성취감 저하 (Reduced Personal Accomplishment)
+    overall_risk: bool
+
+
 class StatisticsInsight(BaseModel):
     """통계 인사이트"""
     period: str
@@ -61,6 +84,7 @@ class StatisticsInsight(BaseModel):
     top_keywords: List[str]
     burnout_trend: Dict[str, int]
     insight_messages: List[str]
+    mbi_assessment: Optional[MBIAssessment] = None
 
 
 class AnalysisCallback(BaseModel):
@@ -80,3 +104,31 @@ class AnalysisCallback(BaseModel):
     success: bool = True
     errors: List[ErrorDetail] = []
     fallback_used: bool = False
+
+
+# ============================================
+# 피드백 요청/응답 모델
+# ============================================
+
+class FeedbackRecord(BaseModel):
+    """단일 피드백 레코드 (백엔드 DB 1행)"""
+    predicted_mbi_category: str          # AI가 예측한 카테고리
+    is_correct: bool                     # 사용자 정오 확인
+    satisfaction_score: int              # 만족도 1~5
+    user_mbi_category: Optional[str] = None  # 틀렸을 때 사용자가 선택한 카테고리
+
+
+class FeedbackBatchRequest(BaseModel):
+    """백엔드 -> AI 서버 2주 배치 전송"""
+    period_start: str                    # "2026-02-01"
+    period_end: str                      # "2026-02-14"
+    records: List[FeedbackRecord]
+
+
+class FeedbackBatchResponse(BaseModel):
+    """배치 수신 응답"""
+    status: str
+    received: int                        # 수신된 레코드 수
+    total_accumulated: int               # 누적 전체 수
+    model_accuracy: float                # 전체 정확도
+    category_corrections: Dict[str, int] # 카테고리별 오답 수

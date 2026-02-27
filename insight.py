@@ -7,7 +7,7 @@ from typing import List, Optional
 from collections import Counter
 
 from config import Config
-from models import DiaryHistory, DiaryAnalysisResult, StatisticsInsight
+from models import DiaryHistory, DiaryAnalysisResult, StatisticsInsight, MBIAssessment, MBIRiskItem
 from prompts import PersonaType, PERSONAS
 
 
@@ -60,6 +60,11 @@ class StatisticsInsightGenerator:
             emotion_frequency, situation_frequency, keyword_counter, burnout_trend, len(diary_analyses)
         )
         
+        # MBI 위험도 평가
+        mbi_assessment = self._calculate_mbi_assessment(
+            burnout_trend, emotion_frequency, len(diary_analyses)
+        )
+
         return StatisticsInsight(
             period=period,
             total_entries=len(diary_analyses),
@@ -67,7 +72,8 @@ class StatisticsInsightGenerator:
             situation_frequency=dict(situation_frequency),
             top_keywords=top_keywords,
             burnout_trend=dict(burnout_trend),
-            insight_messages=insight_messages
+            insight_messages=insight_messages,
+            mbi_assessment=mbi_assessment
         )
     
     def _generate_insight_messages(
@@ -128,6 +134,76 @@ class StatisticsInsightGenerator:
         
         return messages[:4]
     
+    def _calculate_mbi_assessment(
+        self,
+        burnout_trend: Counter,
+        emotion_frequency: Counter,
+        total: int
+    ) -> MBIAssessment:
+        """
+        MBI 3요소 위험도 계산
+
+        근거: Lee et al. (2017) MBI 절단점을 비율로 환산
+        4카테고리 → MBI 3요소 역매핑 (한국형 세분화 해석 레이어)
+
+        매핑 논리:
+          EE ← 정서적_고갈              (MBI 원전 EE와 직접 대응)
+          DP ← 좌절_압박 + 부정적_대인관계 (MBI DP의 두 측면: 업무 냉소 + 대인 냉소)
+          PA ← 긍정 비율 부재 + 자기비하 (MBI PA 저하의 두 신호: 수동적 + 능동적)
+        """
+        # ── EE: 정서적_고갈 비율 ──
+        ee_count = burnout_trend.get("EMOTIONAL_EXHAUSTION", 0)
+        ee_ratio = round(ee_count / total, 4) if total > 0 else 0.0
+        # 컷오프: 54점 만점 중 30점 이상 → 비율 환산 55%
+        EE_THRESHOLD = 0.55
+
+        # ── DP: 좌절_압박 + 부정적_대인관계 합산 비율 ──
+        dp_count = (
+            burnout_trend.get("FRUSTRATION_PRESSURE", 0) +
+            burnout_trend.get("NEGATIVE_RELATIONSHIP", 0)
+        )
+        dp_ratio = round(dp_count / total, 4) if total > 0 else 0.0
+        # 컷오프: 30점 만점 중 11점 이상 → 비율 환산 36%
+        DP_THRESHOLD = 0.36
+
+        # ── PA: 긍정 비율이 낮을수록 위험 ──
+        positive_count = emotion_frequency.get("긍정", 0)
+        pa_ratio = round(positive_count / total, 4) if total > 0 else 0.0
+        # 컷오프: 긍정 비율 68% 미만 → 위험
+        # 추가 신호: 자기비하 비율 20% 초과 시 PA 위험 가중
+        PA_THRESHOLD = 0.68
+        self_dep_count = burnout_trend.get("SELF_DEPRECATION", 0)
+        self_dep_ratio = self_dep_count / total if total > 0 else 0.0
+        pa_is_risk = (pa_ratio < PA_THRESHOLD) or (self_dep_ratio > 0.20)
+
+        overall_risk = (
+            ee_ratio >= EE_THRESHOLD or
+            dp_ratio >= DP_THRESHOLD or
+            pa_is_risk
+        )
+
+        return MBIAssessment(
+            EE=MBIRiskItem(
+                ratio=ee_ratio,
+                threshold=EE_THRESHOLD,
+                is_risk=ee_ratio >= EE_THRESHOLD,
+                contributing=["EMOTIONAL_EXHAUSTION"]
+            ),
+            DP=MBIRiskItem(
+                ratio=dp_ratio,
+                threshold=DP_THRESHOLD,
+                is_risk=dp_ratio >= DP_THRESHOLD,
+                contributing=["FRUSTRATION_PRESSURE", "NEGATIVE_RELATIONSHIP"]
+            ),
+            PA=MBIRiskItem(
+                ratio=pa_ratio,
+                threshold=PA_THRESHOLD,
+                is_risk=pa_is_risk,
+                contributing=["긍정_부재", "SELF_DEPRECATION"]
+            ),
+            overall_risk=overall_risk
+        )
+
     def _format_message(self, base_message: str) -> str:
         """페르소나에 맞게 메시지 포맷팅"""
         if self.persona_type == PersonaType.FRIENDLY_BUDDY:

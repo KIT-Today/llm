@@ -83,15 +83,26 @@
   "diary_id": 105,
   "primary_emotion": "부정",
   "primary_score": 0.91,
-  "mbi_category": "EMOTIONAL_EXHAUSTION",
+  "mbi_category": "정서적_고갈",
   "emotion_probs": {
     "긍정": 0.09,
-    "부정": 0.91
+    "부정": 0.91,
+    "정서적_고갈": 0.61,
+    "좌절_압박": 0.21,
+    "부정적_대인관계": 0.10,
+    "자기비하": 0.08,
+    "statistics": { ... }
   },
   "ai_message": "많이 지치셨겠어요. 오늘 하루도 정말 수고하셨습니다.",
   "recommendations": [
-    { "activity_id": 3 },
-    { "activity_id": 31 }
+    {
+      "act_content": "따뜻한 차/코코아 한 잔 마시기",
+      "act_category": "REST",
+      "is_active": false,
+      "is_outdoor": false,
+      "is_social": false,
+      "ai_message": ""
+    }
   ]
 }
 ```
@@ -101,10 +112,50 @@
 | `diary_id` | int | 분석 대상 일기 ID |
 | `primary_emotion` | str | `"긍정"` 또는 `"부정"` |
 | `primary_score` | float | 감정 확률 (0.0 ~ 1.0) |
-| `mbi_category` | str | `NONE`, `EMOTIONAL_EXHAUSTION`, `FRUSTRATION_PRESSURE`, `NEGATIVE_RELATIONSHIP`, `SELF_DEPRECATION` |
-| `emotion_probs` | dict | `{"긍정": float, "부정": float}` |
+| `mbi_category` | str | `NORMAL` 또는 한국어 카테고리 4종 |
+| `emotion_probs` | dict | Stage 1 + Stage 2 확률 항상 포함 (아래 참고) |
 | `ai_message` | str | 페르소나가 반영된 AI 총평 메시지 |
-| `recommendations` | List | 추천 활동 ID 목록 (일기 3개 이상일 때만 포함) |
+| `recommendations` | List | 추천 활동 목록 (일기 3개 이상일 때만 포함) |
+
+#### emotion_probs 구조
+
+항상 6개 키 포함. `primary_emotion == "긍정"`이면 Stage 2 미실행 → 카테고리 값은 `-1.0` 센티널.
+
+```json
+// 긍정일 때 (Stage 2 미실행)
+"emotion_probs": {
+  "긍정": 0.88,
+  "부정": 0.12,
+  "정서적_고갈": -1.0,
+  "좌절_압박": -1.0,
+  "부정적_대인관계": -1.0,
+  "자기비하": -1.0
+}
+
+// 부정일 때 (Stage 2 실행)
+"emotion_probs": {
+  "긍정": 0.09,
+  "부정": 0.91,
+  "정서적_고갈": 0.61,
+  "좌절_압박": 0.21,
+  "부정적_대인관계": 0.10,
+  "자기비하": 0.08,
+  "statistics": { ... }   // 일기 3개 이상 시만 포함
+}
+```
+
+> ⚠️ Stage 2 카테고리 값이 `-1.0`이면 미계산 상태. UI에서 표시 시 필터링 필요.
+
+#### recommendations 필드
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `act_content` | str | 활동 내용 |
+| `act_category` | str | `REST` / `VENTILATION` / `SMALL_WIN` |
+| `is_active` | bool | 신체 활동 여부 |
+| `is_outdoor` | bool | 야외 활동 여부 |
+| `is_social` | bool | 사회적 교류 여부 |
+| `ai_message` | str | 개인화 멘트 (`USE_LLM=true` 시), 기본값 `""` |
 
 - **Response** (Code: 200): `"Analysis & Solutions saved successfully"`
 
@@ -192,11 +243,78 @@
 
 ---
 
+### 6-7. 피드백 배치 수신
+
+- **API**: `POST /feedback/batch`
+- **호출 주체**: 백엔드 → AI 서버 (주기적 배치)
+
+- **Request Body**:
+```json
+{
+  "feedbacks": [
+    {
+      "predicted_mbi_category": "정서적_고갈",
+      "ai_message_rating": 5,
+      "mbi_category_rating": 2
+    },
+    {
+      "predicted_mbi_category": "자기비하",
+      "ai_message_rating": 3,
+      "mbi_category_rating": 4
+    }
+  ]
+}
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `predicted_mbi_category` | str | AI가 예측한 카테고리 (한국어) |
+| `ai_message_rating` | int 1~5 | AI 총평 메시지 만족도 |
+| `mbi_category_rating` | int 1~5 | MBI 카테고리 적절성 평가 |
+
+- **Response** (Code: 200):
+```json
+{
+  "status": "saved",
+  "received": 2,
+  "total_accumulated": 150,
+  "avg_ai_message_rating": 4.0,
+  "avg_mbi_category_rating": 3.0,
+  "low_mbi_by_category": {
+    "정서적_고갈": 3
+  }
+}
+```
+
+> `low_mbi_by_category`: `mbi_category_rating <= 2`인 레코드를 카테고리별로 집계. 모델의 취약 카테고리 파악에 활용.
+
+---
+
+### 6-8. 피드백 통계 조회
+
+- **API**: `GET /feedback/stats`
+- **호출 주체**: 운영자
+
+- **Response** (Code: 200):
+```json
+{
+  "total": 150,
+  "avg_ai_message_rating": 3.9,
+  "avg_mbi_category_rating": 3.4,
+  "low_mbi_by_category": {
+    "정서적_고갈": 12,
+    "자기비하": 7
+  }
+}
+```
+
+---
+
 ### @ MBI 카테고리 코드표
 
 | 한국어 | mbi_category 값 | 설명 |
 |--------|-----------------|------|
-| 긍정 | `NONE` | 번아웃 없음 |
+| 긍정 | `NORMAL` | 번아웃 없음 |
 | 정서적 고갈 | `EMOTIONAL_EXHAUSTION` | 에너지 소진, 피로, 무력감 |
 | 좌절/압박 | `FRUSTRATION_PRESSURE` | 분노, 불만, 억울함 |
 | 부정적 대인관계 | `NEGATIVE_RELATIONSHIP` | 대인 갈등, 소외감 |

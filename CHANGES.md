@@ -268,6 +268,85 @@ AI 서버 → 백엔드 전송 페이로드:
 
 ---
 
+---
+
+## 2026-02-28 변경사항 (v2.6)
+
+### recommendations[].ai_message 복원
+
+#### 수정: `models.py`
+- `RecommendationItem`에 `ai_message: str = ""` 필드 추가
+
+#### 수정: `ai_server.py` (v2.5 → v2.6)
+- `generate_recommendations()`: `USE_LLM=true` 시 활동별 개인화 멘트 생성
+- `send_callback()`: `recommendations[].ai_message` 페이로드에 포함
+
+| 조건 | 값 |
+|------|-----|
+| `USE_LLM=true` | 활동명 + 번아웃 카테고리 기반 LLM 개인화 멘트 |
+| `USE_LLM=false` (기본) | `""` (빈 문자열) |
+
+---
+
+## 2026-02-28 변경사항 (v2.7)
+
+### 피드백 API 재설계
+
+백엔드 실제 제공 형식에 맞게 전면 재설계.
+
+#### 수정: `models.py`
+
+| 클래스 | 변경 내용 |
+|--------|----------|
+| `FeedbackRecord` | `is_correct` + `satisfaction_score` → `ai_message_rating` + `mbi_category_rating` (각 1~5) |
+| `FeedbackBatchRequest` | `period_start/end` + `records` → `feedbacks` |
+| `FeedbackBatchResponse` | `model_accuracy` + `category_corrections` → `avg_ai_message_rating` + `avg_mbi_category_rating` + `low_mbi_by_category` |
+
+#### 수정: `feedback_store.py`
+- CSV 헤더: `received_at`, `predicted_mbi_category`, `ai_message_rating`, `mbi_category_rating` (4컬럼)
+- `save_batch()`: period 파라미터 제거, 배치별 평균 평점 반환
+- `get_stats()`: 평균 평점 + `mbi_category_rating <= 2` 카테고리별 집계
+
+#### 수정: `ai_server.py`
+- `/feedback/batch` 엔드포인트 검증 로직 업데이트
+- 수신 시각 서버에서 자동 기록 (백엔드가 날짜 전송 불필요)
+
+#### 확정된 요청 형식
+```json
+{
+  "feedbacks": [
+    {
+      "predicted_mbi_category": "정서적_고갈",
+      "ai_message_rating": 5,
+      "mbi_category_rating": 2
+    }
+  ]
+}
+```
+
+---
+
+### emotion_probs Stage 2 확률 추가
+
+#### 수정: `analyzer.py`
+- `emotion_probs`에 Stage 2 카테고리 확률 항상 포함
+- `primary_emotion == "긍정"` (Stage 2 미실행) → 카테고리 값 `-1.0` 센티널
+- `primary_emotion == "부정"` (Stage 2 실행) → 실제 확률 (0.0 ~ 1.0)
+
+```json
+// 긍정
+"emotion_probs": { "긍정": 0.88, "부정": 0.12,
+  "정서적_고갈": -1.0, "좌절_압박": -1.0, "부정적_대인관계": -1.0, "자기비하": -1.0 }
+
+// 부정
+"emotion_probs": { "긍정": 0.09, "부정": 0.91,
+  "정서적_고갈": 0.61, "좌절_압박": 0.21, "부정적_대인관계": 0.10, "자기비하": 0.08 }
+```
+
+> `-1.0` = Stage 2 미계산 센티널. `0.0`과 구분하기 위해 사용.
+
+---
+
 ## 변경되지 않은 것
 
 - `feedback.py`, `emotion_match.py`, `insight.py` 등 — 미변경

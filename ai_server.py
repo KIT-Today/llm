@@ -132,44 +132,46 @@ async def root():
 @app.post("/feedback/batch", response_model=FeedbackBatchResponse)
 async def receive_feedback_batch(request: FeedbackBatchRequest):
     """
-    백엔드 2주 배치 피드백 수신
+    배치 피드백 수신
 
-    백엔드가 2주마다 누적된 설문 응답을 일괄 전송합니다.
-    - period_start / period_end : 해당 배치 기간
-    - records : 기간 내 전체 피드백 레코드 목록
+    백엔드가 누적된 설문 응답을 일괄 전송합니다.
+    - feedbacks : 피드백 레코드 목록
       - predicted_mbi_category : AI가 예측한 카테고리
-      - is_correct             : 사용자 정오 확인
-      - satisfaction_score     : 만족도 1~5
-      - user_mbi_category      : 틀렸을 때 사용자가 선택한 카테고리 (nullable)
+      - ai_message_rating      : AI 메시지 만족도 1~5
+      - mbi_category_rating    : MBI 카테고리 만족도 1~5
     """
-    if not request.records:
-        raise HTTPException(status_code=400, detail="records가 비어있습니다.")
+    if not request.feedbacks:
+        raise HTTPException(status_code=400, detail="feedbacks가 비어있습니다.")
 
     # 레코드별 유효성 검증
-    for i, rec in enumerate(request.records):
-        if not (1 <= rec.satisfaction_score <= 5):
+    for i, rec in enumerate(request.feedbacks):
+        if not (1 <= rec.ai_message_rating <= 5):
             raise HTTPException(
                 status_code=400,
-                detail=f"records[{i}].satisfaction_score는 1~5 사이여야 합니다."
+                detail=f"feedbacks[{i}].ai_message_rating는 1~5 사이여야 합니다."
             )
-        if rec.user_mbi_category and rec.user_mbi_category not in VALID_MBI_CATEGORIES:
+        if not (1 <= rec.mbi_category_rating <= 5):
             raise HTTPException(
                 status_code=400,
-                detail=f"records[{i}].user_mbi_category 유효하지 않음: {rec.user_mbi_category}"
+                detail=f"feedbacks[{i}].mbi_category_rating는 1~5 사이여야 합니다."
+            )
+        if rec.predicted_mbi_category not in VALID_MBI_CATEGORIES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"feedbacks[{i}].predicted_mbi_category 유효하지 않음: {rec.predicted_mbi_category}"
             )
 
     result = feedback_store.save_batch(
-        period_start=request.period_start,
-        period_end=request.period_end,
-        records=[rec.model_dump() for rec in request.records],
+        records=[rec.model_dump() for rec in request.feedbacks],
     )
 
     return FeedbackBatchResponse(
         status="saved",
         received=result["received"],
         total_accumulated=result["total_accumulated"],
-        model_accuracy=result["model_accuracy"],
-        category_corrections=result["category_corrections"],
+        avg_ai_message_rating=result["avg_ai_message_rating"],
+        avg_mbi_category_rating=result["avg_mbi_category_rating"],
+        low_mbi_by_category=result["low_mbi_by_category"],
     )
 
 

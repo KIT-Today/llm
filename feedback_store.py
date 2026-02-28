@@ -26,12 +26,9 @@ VALID_MBI_CATEGORIES = {"정서적_고갈", "좌절_압박", "부정적_대인�
 
 CSV_HEADER = [
     "received_at",            # AI 서버가 배치를 수신한 시각
-    "period_start",           # 해당 배치 기간 시작
-    "period_end",             # 해당 배치 기간 끝
     "predicted_mbi_category", # AI가 예측한 카테고리
-    "is_correct",             # 사용자 정오 확인
-    "satisfaction_score",     # 만족도 1~5
-    "user_mbi_category",      # 틀렸을 때 사용자가 선택한 카테고리 (nullable)
+    "ai_message_rating",      # AI 메시지 만족도 1~5
+    "mbi_category_rating",    # MBI 카테고리 만족도 1~5
 ]
 
 
@@ -67,55 +64,54 @@ class FeedbackStore:
 
     # ── 퍼블릭 API ─────────────────────────────────────────
 
-    def save_batch(
-        self,
-        period_start: str,
-        period_end: str,
-        records: list[dict],
-    ) -> dict:
+    def save_batch(self, records: list[dict]) -> dict:
         """
-        2주 배치 피드백을 CSV에 저장합니다.
+        배치 피드백을 CSV에 저장합니다.
 
         Args:
-            period_start: 배치 기간 시작 ("2026-02-01")
-            period_end:   배치 기간 끝   ("2026-02-14")
-            records:      FeedbackRecord 리스트 (dict 형태)
+            records: FeedbackRecord 리스트 (dict 형태)
 
         Returns:
-            dict: {received, total_accumulated, model_accuracy, category_corrections}
+            dict: {received, total_accumulated, avg_ai_message_rating,
+                   avg_mbi_category_rating, low_mbi_by_category}
         """
         received_at = datetime.now().isoformat()
 
         rows = [
             [
                 received_at,
-                period_start,
-                period_end,
                 r["predicted_mbi_category"],
-                r["is_correct"],
-                r["satisfaction_score"],
-                r.get("user_mbi_category") or "",
+                r["ai_message_rating"],
+                r["mbi_category_rating"],
             ]
             for r in records
         ]
 
         with self._lock:
             with open(self._path, "a", newline="", encoding="utf-8") as f:
-                writer = csv.writer(f)
-                writer.writerows(rows)
+                csv.writer(f).writerows(rows)
 
-        stats = self.get_stats()
+        # 이번 배치 통계
+        avg_ai  = round(sum(r["ai_message_rating"]    for r in records) / len(records), 2)
+        avg_mbi = round(sum(r["mbi_category_rating"]  for r in records) / len(records), 2)
+        low_mbi: dict[str, int] = {}
+        for r in records:
+            if r["mbi_category_rating"] <= 2:
+                cat = r["predicted_mbi_category"]
+                low_mbi[cat] = low_mbi.get(cat, 0) + 1
+
+        total = self.get_stats()["total"]
         print(
             f"[FeedbackStore] 배치 수신: {len(records)}건 저장 "
-            f"(기간: {period_start} ~ {period_end}, "
-            f"누적: {stats['total']}건, 정확도: {stats['model_accuracy']:.1%})"
+            f"(누적: {total}건, AI평점: {avg_ai}, 카테고리평점: {avg_mbi})"
         )
 
         return {
             "received": len(records),
-            "total_accumulated": stats["total"],
-            "model_accuracy": stats["model_accuracy"],
-            "category_corrections": stats["category_corrections"],
+            "total_accumulated": total,
+            "avg_ai_message_rating": avg_ai,
+            "avg_mbi_category_rating": avg_mbi,
+            "low_mbi_by_category": low_mbi,
         }
 
     def get_stats(self) -> dict:
@@ -123,8 +119,8 @@ class FeedbackStore:
         전체 누적 피드백 통계를 반환합니다.
 
         Returns:
-            dict: total, correct, incorrect, model_accuracy,
-                  avg_satisfaction, category_corrections
+            dict: total, avg_ai_message_rating, avg_mbi_category_rating,
+                  low_mbi_by_category
         """
         with self._lock:
             rows = self._read_all()
@@ -133,35 +129,24 @@ class FeedbackStore:
         if total == 0:
             return {
                 "total": 0,
-                "correct": 0,
-                "incorrect": 0,
-                "model_accuracy": 0.0,
-                "avg_satisfaction": 0.0,
-                "category_corrections": {},
+                "avg_ai_message_rating": 0.0,
+                "avg_mbi_category_rating": 0.0,
+                "low_mbi_by_category": {},
             }
 
-        correct = sum(1 for r in rows if r["is_correct"].lower() == "true")
+        ai_ratings  = [int(r["ai_message_rating"])   for r in rows if r["ai_message_rating"].isdigit()]
+        mbi_ratings = [int(r["mbi_category_rating"]) for r in rows if r["mbi_category_rating"].isdigit()]
 
-        satisfaction_scores = [
-            int(r["satisfaction_score"])
-            for r in rows
-            if r["satisfaction_score"].isdigit()
-        ]
-
-        # 카테고리별 오답 현황 (어떤 카테고리가 자주 틀리는지)
-        category_corrections: dict[str, int] = {}
+        # 카테고리별 낮은 평점(1~2) 수 → 어느 카테고리가 약한지 파악
+        low_mbi_by_category: dict[str, int] = {}
         for r in rows:
-            if r["is_correct"].lower() == "false" and r["user_mbi_category"]:
-                cat = r["user_mbi_category"]
-                category_corrections[cat] = category_corrections.get(cat, 0) + 1
+            if r["mbi_category_rating"].isdigit() and int(r["mbi_category_rating"]) <= 2:
+                cat = r["predicted_mbi_category"]
+                low_mbi_by_category[cat] = low_mbi_by_category.get(cat, 0) + 1
 
         return {
             "total": total,
-            "correct": correct,
-            "incorrect": total - correct,
-            "model_accuracy": round(correct / total, 4),
-            "avg_satisfaction": round(
-                sum(satisfaction_scores) / len(satisfaction_scores), 2
-            ) if satisfaction_scores else 0.0,
-            "category_corrections": category_corrections,
+            "avg_ai_message_rating": round(sum(ai_ratings)  / len(ai_ratings),  2) if ai_ratings  else 0.0,
+            "avg_mbi_category_rating": round(sum(mbi_ratings) / len(mbi_ratings), 2) if mbi_ratings else 0.0,
+            "low_mbi_by_category": low_mbi_by_category,
         }

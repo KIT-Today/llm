@@ -133,15 +133,18 @@ class BurnoutAnalyzer:
         s1_pred, s1_probs = self.predict_stage1(analysis_text)
         primary_emotion = STAGE1_CATEGORIES[s1_pred]
 
+        # Stage 2 카테고리 확률 기본값 -1.0 (긍정이면 Stage 2 미실행 → 0.0과 구분)
+        s2_probs_map = {cat: -1.0 for cat in STAGE2_CATEGORIES.values()}
+
         result = {
             "primary_emotion": primary_emotion,
             "primary_score": float(s1_probs[s1_pred]),
-            "emotion_probs": {"긍정": float(s1_probs[0]), "부정": float(s1_probs[1])},
+            "emotion_probs": {"긍정": float(s1_probs[0]), "부정": float(s1_probs[1]), **s2_probs_map},
             "burnout_category": None,
             "mbi_category": "NORMAL",   # Stage 1 긍정 → NORMAL, Stage 2 부정 → 한국어 카테고리
             "keywords": []
         }
-        
+
         # Stage 2: 번아웃 카테고리 (부정인 경우만)
         if s1_pred == 1:
             s2_pred, s2_probs = self.predict_stage2(analysis_text)
@@ -149,5 +152,8 @@ class BurnoutAnalyzer:
             result["burnout_category"] = burnout_category
             result["mbi_category"] = burnout_category  # 한국어 카테고리 그대로 전송 (백엔드가 EE/DP/PA로 변환)
             result["keywords"] = self.extract_keywords(analysis_text, burnout_category)
+            # Stage 2 카테고리별 확률로 덮어쓰기
+            for i, cat in STAGE2_CATEGORIES.items():
+                result["emotion_probs"][cat] = round(float(s2_probs[i]), 4)
         
         return result

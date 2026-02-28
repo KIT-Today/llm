@@ -112,18 +112,15 @@ class AnalysisCallback(BaseModel):
 # ============================================
 
 class FeedbackRecord(BaseModel):
-    """단일 피드백 레코드 (백엔드 DB 1행)"""
-    predicted_mbi_category: str          # AI가 예측한 카테고리
-    is_correct: bool                     # 사용자 정오 확인
-    satisfaction_score: int              # 만족도 1~5
-    user_mbi_category: Optional[str] = None  # 틀렸을 때 사용자가 선택한 카테고리
+    """단일 피드백 레코드"""
+    predicted_mbi_category: str  # AI가 예측한 카테고리
+    ai_message_rating: int       # AI 메시지 만족도 1~5
+    mbi_category_rating: int     # MBI 카테고리 만족도 1~5
 
 
 class FeedbackBatchRequest(BaseModel):
-    """백엔드 -> AI 서버 2주 배치 전송"""
-    period_start: str                    # "2026-02-01"
-    period_end: str                      # "2026-02-14"
-    records: List[FeedbackRecord]
+    """백엔드 -> AI 서버 배치 전송"""
+    feedbacks: List[FeedbackRecord]
 
 
 class FeedbackBatchResponse(BaseModel):
@@ -131,5 +128,6 @@ class FeedbackBatchResponse(BaseModel):
     status: str
     received: int                        # 수신된 레코드 수
     total_accumulated: int               # 누적 전체 수
-    model_accuracy: float                # 전체 정확도
-    category_corrections: Dict[str, int] # 카테고리별 오답 수
+    avg_ai_message_rating: float         # 이번 배치 AI 메시지 평균 평점
+    avg_mbi_category_rating: float       # 이번 배치 카테고리 평균 평점
+    low_mbi_by_category: Dict[str, int]  # 카테고리별 낮은 평점(1~2) 수

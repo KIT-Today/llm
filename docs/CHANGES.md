@@ -347,6 +347,53 @@ AI 서버 → 백엔드 전송 페이로드:
 
 ---
 
+## 2026-03-04 변경사항 (v2.8)
+
+### EEVE 기반 일기체 스타일 트랜스퍼 노트북 추가
+
+#### 배경
+Stage 2 FineTune_v4 F1 **0.4839** 정체 원인: 학습 데이터(AI Hub 구어체) vs 실사용자 입력(일기체) 도메인 미스매치.
+LLM API 사용 불가(비용·라이선스) → 로컬 오픈소스 EEVE-Korean-Instruct-10.8B (Apache 2.0) 활용.
+
+#### 신규 파일: `notebooks/KURE_Burnout_StyleTransfer_v1.ipynb`
+
+| 섹션 | 내용 |
+|------|------|
+| 1 | 환경 설정 (bitsandbytes, transformers) |
+| 2 | 경로 설정 |
+| 3 | EEVE-Korean-Instruct-10.8B 4-bit 양자화 로드 (Colab T4 가능) |
+| 4 | 프롬프트 설계 + 소량 테스트 (5건 품질 확인) |
+| 5 | 전체 변환 (50건마다 `st_checkpoint.json` 저장, Colab 단절 대비) |
+| 6 | 품질 필터링 (최소 10글자, ok/fallback만 유지) |
+| 7 | EEVE 언로드 + KURE 로드 (VRAM 확보) |
+| 8 | Stage 2 재학습 데이터 준비 (원본+일기체 1:1 혼합) |
+| 9 | Stage 2 재학습 (Focal Loss, warm-start from `stage2_model_v3.pt`) |
+| 10 | 성능 비교 — v3(0.4754) vs FineTune_v4(0.4839) vs StyleTransfer |
+| 11 | 직접 문장 테스트 — 하드코딩 일기체 문장으로 즉시 검증 (**※ 아직 main 미반영**) |
+
+> **⚠️ 섹션 11 누락**: PR #9 머지 시점 문제로 직접 문장 테스트 셀이 main에 포함되지 않음.
+> `feat/style-transfer-notebook` 브랜치의 `481bdf5` 커밋을 cherry-pick 또는 재작업 필요.
+
+#### 저장 경로
+- 모델: `stage2_model_st.pt`
+- 데이터: `diary_train_v1.csv`
+- `data_version: 'style_transfer_v1'`
+
+---
+
+### 파일 구조 정리 (PR #10)
+
+```
+루트 → notebooks/  : 모든 .ipynb 학습 노트북 9개
+루트 → docs/       : API_SPEC.md, CHANGES.md, DEPLOYMENT.md,
+                      NOTEBOOK_CHANGES.md, openapi_callback_schema.yaml
+```
+
+#### docs/API_SPEC.md 수정
+- MBI 코드표 `NONE` → `NORMAL` 오타 수정 (실제 코드값과 일치)
+
+---
+
 ## 변경되지 않은 것
 
 - `feedback.py`, `emotion_match.py`, `insight.py` 등 — 미변경

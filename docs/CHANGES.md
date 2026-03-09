@@ -394,6 +394,38 @@ LLM API 사용 불가(비용·라이선스) → 로컬 오픈소스 EEVE-Korean-
 
 ---
 
+## 2026-03-09 변경사항 (v2.9)
+
+### StyleTransfer v2 실험 결과 + 노트북 개선
+
+#### 신규 파일: `notebooks/KURE_Burnout_StyleTransfer_v2.ipynb`
+
+v1(EEVE-Korean-Instruct-10.8B)의 A100 사용량 제한 + T4 OOM 문제로 모델 교체.
+
+| 항목 | v1 | v2 |
+|------|----|----|
+| LLM | EEVE-Korean-Instruct-10.8B | Qwen2.5-7B-Instruct |
+| GPU 요구사항 | A100 (40GB) | T4 (15GB) 가능 |
+| max_new_tokens | 150 | 100 |
+| 변환 대상 | 전체 39,547건 | 클래스당 1,000건 × 4 = 4,000건 (층화 샘플링) |
+| 중국어 fallback | 없음 | 있음 (re 정규식 감지) |
+| 체크포인트 | `st_checkpoint.json` | `st_checkpoint_v2.json` |
+| 저장 모델 | `stage2_model_st.pt` | `stage2_model_st_v2.pt` |
+
+#### 실험 결과
+
+| 모델 | F1 (macro) |
+|------|------------|
+| Stage 2 v3 (기준) | 0.4754 |
+| Stage 2 FineTune v4 | 0.4839 |
+| Stage 2 StyleTransfer v2 | **0.4690** |
+
+- 변환 품질: ok 4,000건 / fallback 0건 / error 0건
+- **결론**: 스타일 트랜스퍼가 오히려 성능 저하. 도메인 미스매치가 F1 정체의 주 원인이 아닐 가능성 높음.
+- 현재 최고 성능 모델: `stage2_model_v3_ft.pt` (FineTune v4, F1=0.4839)
+
+---
+
 ## 변경되지 않은 것
 
 - `feedback.py`, `emotion_match.py`, `insight.py` 등 — 미변경

@@ -426,6 +426,86 @@ v1(EEVE-Korean-Instruct-10.8B)의 A100 사용량 제한 + T4 OOM 문제로 모�
 
 ---
 
+## 2026-03-11 변경사항 (v3.0)
+
+### E2E Fine-tuning 노트북 추가
+
+StyleTransfer가 오히려 성능 저하(F1=0.4690)를 보이면서, 도메인 미스매치가 주 원인이 아니라는 결론 도달.
+새로운 방향: **KURE backbone 상위 레이어를 직접 학습**하여 task-specific 임베딩 획득.
+
+#### 신규 파일: `notebooks/KURE_Burnout_E2E_v1.ipynb`
+
+| 항목 | 내용 |
+|------|------|
+| NUM_UNFREEZE | 2 (상위 2개 레이어 해동) |
+| batch_size | 16 |
+| lr_backbone | 1e-5 (differential LR) |
+| lr_head | 1e-4 |
+| 메모리 최적화 | gradient_checkpointing_enable() + GradScaler (fp16) + expandable_segments |
+| warm-start | `stage2_model_v3.pt` classifier 가중치 로드 |
+| 저장 모델 | `stage2_model_e2e_v1.pt` |
+
+#### 실험 결과
+
+| 모델 | F1 (macro) |
+|------|------------|
+| Stage 2 v3 (기준) | 0.4754 |
+| Stage 2 FineTune v4 | 0.4839 |
+| Stage 2 StyleTransfer v2 | 0.4690 |
+| **Stage 2 E2E v1 (2 layers)** | **0.4835** |
+
+- FineTune v4(0.4839)와 사실상 동점 수준
+
+---
+
+#### 신규 파일: `notebooks/KURE_Burnout_E2E_v2.ipynb`
+
+| 항목 | v1 | v2 |
+|------|----|----|
+| NUM_UNFREEZE | 2 | **4** |
+| 학습 체크포인트 | 없음 | **있음** (`e2e_train_ckpt_v2.pt`, 3 epoch마다) |
+| 저장 모델 | `stage2_model_e2e_v1.pt` | `stage2_model_e2e_v2.pt` |
+
+- 체크포인트 저장 항목: `model_state_dict`, `optimizer_state_dict`, `scheduler_state_dict`, `scaler_state_dict`, `best`, `patience_cnt`, `epoch`
+- Colab 런타임 단절 대비, `start_epoch`부터 재개 가능
+- **결과 미확인** (실행 예정)
+
+---
+
+### 📚 모델 선택 근거: KURE-v1 vs KoELECTRA
+
+> 다음 대화의 Claude가 참고할 수 있도록 기록.
+
+#### 비교표
+
+| 항목 | **KURE-v1** | **KoELECTRA-Base v3** |
+|---|---|---|
+| 개발처 | 고려대 NLP AI Lab | monologg (개인) |
+| 기반 모델 | BAAI/bge-m3 fine-tuned | ELECTRA 구조 |
+| 임베딩 차원 | **1,024** | 768 |
+| 학습 목적 | Retrieval / Semantic Search | 분류 / NLU 전반 |
+| 학습 방식 | CachedGISTEmbedLoss (대조 학습) | Replaced Token Detection |
+| 학습 데이터 | 200만 한국어 query-document 쌍 | 한국어 34GB |
+| 사용 방식 | SentenceTransformer | HuggingFace Transformers |
+| 출력 형태 | 문장 단위 벡터 (mean-pooled) | 토큰 단위 → [CLS] or pooling |
+| 라이선스 | MIT | Apache 2.0 |
+
+#### 이 프로젝트에서 KURE를 선택한 이유
+
+이 프로젝트의 핵심 구조 = **"임베딩 캐싱 → MLP 분류기 학습"**
+
+1. **문장 표현력**: 대조 학습 기반 → 의미적으로 다른 문장을 벡터 공간에서 잘 분리. 번아웃 4개 카테고리 구분에 유리
+2. **1024차원**: 768차원 대비 풍부한 표현 공간 → MLP가 더 세밀한 경계 학습 가능
+3. **SentenceTransformer 호환**: 임베딩 캐싱 → 빠른 반복 실험에 최적화
+4. **한국어 특화 검색 성능**: 한국어 의미론적 유사도 파악에서 다국어 모델 대비 우수
+
+#### KoELECTRA가 더 유리한 경우 (참고)
+- 직접 end-to-end 분류기 fine-tuning (embedding 캐싱 없이)
+- 모델 경량화가 중요한 서빙 환경
+- NER, 형태소 분석 등 토큰 레벨 태스크
+
+---
+
 ## 변경되지 않은 것
 
 - `feedback.py`, `emotion_match.py`, `insight.py` 등 — 미변경

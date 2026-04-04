@@ -49,34 +49,47 @@ class BurnoutAnalyzer:
         """모델 로드"""
         if self._initialized:
             return
-        
+
         print(f"모델 로딩 중... (Device: {Config.DEVICE})")
-        
+
         # KURE 임베딩 모델
-        self.kure = SentenceTransformer("nlpai-lab/KURE-v1", device=Config.DEVICE)
-        
+        try:
+            self.kure = SentenceTransformer("nlpai-lab/KURE-v1", device=Config.DEVICE)
+        except Exception as e:
+            raise RuntimeError(f"KURE 임베딩 모델 로드 실패: {e}")
+
         # Stage 1: 긍정/부정 분류
         s1_path = f"{Config.MODEL_DIR}/stage1_model.pt"
-        s1_ckpt = torch.load(s1_path, map_location=Config.DEVICE, weights_only=False)
-        self.stage1 = BurnoutClassifier(
-            input_dim=s1_ckpt.get('embedding_dim', 1024),
-            hidden_dim=s1_ckpt.get('hidden_dim', 256),
-            num_classes=2
-        ).to(Config.DEVICE)
-        self.stage1.load_state_dict(s1_ckpt['model_state_dict'])
-        self.stage1.eval()
-        
+        try:
+            s1_ckpt = torch.load(s1_path, map_location=Config.DEVICE, weights_only=False)
+            self.stage1 = BurnoutClassifier(
+                input_dim=s1_ckpt.get('embedding_dim', 1024),
+                hidden_dim=s1_ckpt.get('hidden_dim', 256),
+                num_classes=2
+            ).to(Config.DEVICE)
+            self.stage1.load_state_dict(s1_ckpt['model_state_dict'])
+            self.stage1.eval()
+        except FileNotFoundError:
+            raise RuntimeError(f"Stage 1 모델 파일 없음: {s1_path}")
+        except Exception as e:
+            raise RuntimeError(f"Stage 1 모델 로드 실패: {e}")
+
         # Stage 2: 4가지 번아웃 카테고리 분류
         s2_path = f"{Config.MODEL_DIR}/stage2_model.pt"
-        s2_ckpt = torch.load(s2_path, map_location=Config.DEVICE, weights_only=False)
-        self.stage2 = BurnoutClassifier(
-            input_dim=s2_ckpt.get('embedding_dim', 1024),
-            hidden_dim=s2_ckpt.get('hidden_dim', 256),
-            num_classes=4
-        ).to(Config.DEVICE)
-        self.stage2.load_state_dict(s2_ckpt['model_state_dict'])
-        self.stage2.eval()
-        
+        try:
+            s2_ckpt = torch.load(s2_path, map_location=Config.DEVICE, weights_only=False)
+            self.stage2 = BurnoutClassifier(
+                input_dim=s2_ckpt.get('embedding_dim', 1024),
+                hidden_dim=s2_ckpt.get('hidden_dim', 256),
+                num_classes=4
+            ).to(Config.DEVICE)
+            self.stage2.load_state_dict(s2_ckpt['model_state_dict'])
+            self.stage2.eval()
+        except FileNotFoundError:
+            raise RuntimeError(f"Stage 2 모델 파일 없음: {s2_path}")
+        except Exception as e:
+            raise RuntimeError(f"Stage 2 모델 로드 실패: {e}")
+
         self._initialized = True
         print("모델 로딩 완료!")
     

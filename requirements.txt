@@ -5,9 +5,9 @@
 # 핵심 의존성
 # ============================================
 
-# PyTorch (CUDA 버전에 맞게 설치)
-# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-torch>=2.0.0
+# PyTorch — CUDA 버전은 아래 명령으로 별도 설치 (requirements.txt로 설치 시 CPU 버전 설치됨)
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+# torch>=2.0.0  # 주석 처리: pip install -r 사용 시 PyPI CPU 버전이 덮어쓸 수 있음
 
 # Transformers & Sentence Transformers
 transformers>=4.34.0

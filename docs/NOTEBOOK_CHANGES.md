@@ -1,120 +1,92 @@
 # 노트북 변경사항 및 팀 공유 사항
 
-> 작성일: 2026-02-26
+> 최초 작성: 2026-02-26 / 최종 업데이트: 2026-03-11
 
 ---
 
-## 1. 수정된 노트북
+## 1. 노트북 전체 목록 및 상태
 
-### `KURE_Burnout_2Stage_v3.ipynb`
+| 노트북 | 설명 | 상태 | 결과 |
+|--------|------|------|------|
+| `KURE_Burnout_2Stage_v3.ipynb` | 기준 모델 학습 (frozen KURE) | ✅ 완료 | Stage 2 F1 0.4754 |
+| `KURE_Burnout_FineTune_v1.ipynb` | 분류기 헤드 파인튜닝 | ✅ 완료 | Stage 2 F1 0.4839 ← 현재 운영 |
+| `KURE_Burnout_FineTune_v2.ipynb` | v1 실패 분석 후 재설계 | ✅ 완료 | v1과 동일 구조, v1 결과 채택 |
+| `KURE_Burnout_StyleTransfer_v1.ipynb` | EEVE 스타일 트랜스퍼 | ❌ 실패 | A100 OOM |
+| `KURE_Burnout_StyleTransfer_v2.ipynb` | Qwen2.5-7B 스타일 트랜스퍼 | ✅ 완료 | Stage 2 F1 0.4690 (하락, 미사용) |
+| `KURE_Burnout_E2E_v1.ipynb` | KURE 상위 2레이어 해제 E2E | ✅ 완료 | Stage 2 F1 0.4835 |
+| `KURE_Burnout_E2E_v2.ipynb` | KURE 상위 4레이어 해제 E2E | ✅ 완료 | Stage 2 F1 0.4721 (레이어 늘릴수록 하락) |
 
-v3 학습 노트북에서 **Google Drive 경로 불일치** 버그를 수정했습니다.
+---
 
-#### 문제
-- 데이터 로드/저장 경로가 로컬 폴더 구조와 맞지 않아 Colab에서 `FileNotFoundError` 발생
-- 연속적 대화 데이터셋 감정 레이블에 오타 노이즈 존재 (`'분ㄴ'`, `'ㅈ중립'` 등)
+## 2. 전체 성능 비교
 
-#### 수정 내용
+| 모델 | F1 (macro) | v3 대비 | 비고 |
+|------|------------|---------|------|
+| Stage 2 v3 (기준) | 0.4754 | — | frozen KURE |
+| FineTune v4 | **0.4839** | +0.0085 | **현재 운영** |
+| E2E v1 (레이어 2) | 0.4835 | +0.0081 | FineTune v4와 거의 동일 |
+| E2E v2 (레이어 4) | 0.4721 | -0.0033 | 레이어 많이 풀수록 하락 |
+| StyleTransfer v2 | 0.4690 | -0.0064 | 미사용 |
 
-| 셀 | 수정 전 | 수정 후 |
-|----|---------|---------|
-| `cell-4` | `DATA_PATH` 하나만 존재 | `DATASET_PATH`, `PROCESSED_PATH` 변수 추가 |
-| `cell-6` | 단일 경로만 확인 | 세 경로 모두 존재 여부 출력 |
-| `cell-8` | `{DATA_PATH}/burnout_train_v2.csv` | `{PROCESSED_PATH}/burnout_train_v2.csv` |
-| `cell-9` | `{DATA_PATH}/웰니스_대화_스크립트_데이터셋.xlsx` | `{DATASET_PATH}/웰니스 대화 스크립트 데이터셋/웰니스_대화_스크립트_데이터셋.xlsx` |
-| `cell-10` | `{DATA_PATH}/한국어_연속적_대화_데이터셋.xlsx` | `{DATASET_PATH}/한국어 감정 정보가 포함된 연속적 대화 데이터셋/한국어_연속적_대화_데이터셋.xlsx` + 노이즈 정규화 추가 |
-| `cell-12` | `{DATA_PATH}/stage1_train_v3.csv` | `{PROCESSED_PATH}/stage1_train_v3.csv` + `os.makedirs` 추가 |
+### 해석
+- E2E는 레이어 2가 최적, 추가 실험 불필요
+- 모든 접근이 0.47~0.48 정체 → 근본 원인은 데이터 도메인 미스매치
+- **다음 방향**: Ollama 로컬 합성 데이터 생성 + E2E v1 구조 결합
 
-#### 감정 레이블 노이즈 정규화 추가
-```python
-EMOTION_NORMALIZE = {
-    '분ㄴ': '분노', '분': '분노',
-    'ㅈ중립': '중립', 'ㄴ중립': '중립', '중림': '중립',
-}
+---
+
+## 3. 다음 실험 계획
+
+### Ollama 합성 데이터 생성 + 재학습
+- 스크립트: `scripts/generate_diary_data.py` (미구현, Claude.md 참고)
+- 로컬(RTX 4060 Ti)에서 생성, Colab에서 학습 — 병렬 진행 가능
+- 혼합 비율 실험: 합성:원본 = 1:3 / 1:1 / 3:1
+- 모델 구조: E2E v1 (KURE 상위 2레이어 해제) 유지
+
+---
+
+## 4. 피드백 기반 학습 (구현 완료)
+
+> 아이디어 단계에서 `feedback_store.py`로 구현 완료. CHANGES.md v2.4~v2.7 참고.
+
+### 흐름
+```
+AI 분석 결과 표시
+  ↓
+사용자 평가 수집 (ai_message_rating 1~5, mbi_category_rating 1~5)
+  ↓
+2주마다 백엔드 → AI 서버 배치 전송 (POST /feedback/batch)
+  ↓
+feedback_data.csv 누적 → 재학습 방향 도출
 ```
 
----
-
-### `KURE_Burnout_FineTune_v1.ipynb`
-
-FineTune 노트북에서 **CSV 로드 경로 불일치** 버그를 수정했습니다.
-
-#### 문제
-- Drive에 이미 존재하는 v3 CSV 파일을 찾지 못하는 문제
-- `{DATA_PATH}/processed/` 서브폴더를 찾았지만 실제 파일은 `{DATA_PATH}/`에 위치
-
-#### 수정 내용
-
-| 셀 | 수정 전 | 수정 후 |
-|----|---------|---------|
-| `cell-ft-6` | `{DATA_PATH}/processed/{f}` 경로 확인 | `{DATA_PATH}/{f}` 경로 확인 |
-| `cell-ft-8` | `{DATA_PATH}/processed/stage1_train_v3.csv` | `{DATA_PATH}/stage1_train_v3.csv` |
-| `cell-ft-25` | `{DATA_PATH}/processed/training_curves_v3_ft.png` | `{DATA_PATH}/training_curves_v3_ft.png` |
-| `cell-ft-29` | `{DATA_PATH}/processed/stage1_model_v3_ft.pt` | `{DATA_PATH}/stage1_model_v3_ft.pt` |
+### 현재 상태
+- `feedback_store.py`: 배치 저장, 통계 집계 구현 완료
+- `POST /feedback/batch`, `GET /feedback/stats` 엔드포인트 운영 중
+- 재학습 자동화는 미구현 (수동 트리거)
 
 ---
 
-## 2. 현재 모델 학습 현황
-
-- `KURE_Burnout_FineTune_v1.ipynb` 현재 Colab에서 학습 중 (약 2~3시간 소요)
-- 학습 완료 후 결과 확인 예정
-
-### 기대 성능 (v3_ft)
-| | Stage 1 F1 | Stage 2 F1 | Stage 2 Acc |
-|--|-----------|-----------|------------|
-| **현재 (v2)** | 0.9877 | 0.4811 | 48.1% |
-| **목표 (v3_ft)** | 유지 | 0.55+ | 55%+ |
-
----
-
-## 3. 팀 공유 아이디어: 피드백 기반 학습
-
-### 배경
-사용자 일기 기반 번아웃 분류 모델의 도메인 특화도를 높이기 위해 **사용자 피드백을 학습 신호로 활용**하는 방식을 제안합니다.
-
-### 제안 흐름
-```
-AI 분석 결과 표시 ("오늘 감정: 좌절_압박")
-        ↓
-사용자 피드백 수집
-  - 별점 (⭐~⭐⭐⭐⭐⭐) 또는 [맞아요 / 좀 달라요]
-  - 틀렸을 경우: "실제로는 어떤 감정이었나요?" (선택지 제시)
-        ↓
-피드백 데이터 축적 → 주기적 분류기 헤드 재학습
-```
-
-### 기대 효과
-- 실제 일기 도메인 데이터로 모델 점진적 개선
-- 사용자 개인 패턴 반영 (장기적)
-- 프라이버시: 원본 텍스트 저장 없이 `(ai_label, user_label)` 쌍만 저장
-
-### 필요한 논의
-| 파트 | 논의 내용 |
-|------|---------|
-| **백엔드** | `feedback_logs` 테이블 설계, 피드백 API 엔드포인트 추가, 재학습 트리거 조건 |
-| **프론트** | 피드백 UI 위치 및 형태, 사용자 유도 방식, 피드백 노출 타이밍 |
-| **전체** | 개인정보 처리 방침 수정 (피드백 수집 동의), 재학습 주기 및 배포 프로세스 |
-
-### 구현 난이도
-- 백엔드 DB 테이블 1개 추가
-- AI 서버: 재학습 스크립트 (분류기 헤드만, KURE frozen 유지 → 빠름)
-- 프론트: 피드백 UI 컴포넌트 추가
-
-> **현재 단계**: 아이디어 검토 중. 팀 회의 후 방향 결정 필요.
-
----
-
-## 4. 참고: 노트북 실행 순서 (Colab)
+## 5. 노트북 실행 순서 (Colab)
 
 ```
-1. KURE_Burnout_2Stage_v3.ipynb 전체 실행
-   → MyDrive/Burnout/dataset/processed/ 에 v3 CSV 4개 생성
-   → MyDrive/Burnout/dataset/ 에 stage1/2_model_v3.pt 저장
+[기준 데이터 준비]
+1. KURE_Burnout_2Stage_v3.ipynb
+   → processed/ 에 stage1/2_train/val_v3.csv 생성
+   → stage1_model_v3.pt, stage2_model_v3.pt 저장
 
-2. KURE_Burnout_FineTune_v1.ipynb 전체 실행
-   → MyDrive/Burnout/dataset/ 에서 v3 CSV 로드
-   → MyDrive/Burnout/dataset/ 에 stage1/2_model_v3_ft.pt 저장
+[현재 운영 모델]
+2. KURE_Burnout_FineTune_v1.ipynb
+   → stage2_model_v3_ft.pt 저장 (F1 0.4839)
+   → llm/ 루트에 복사 후 서버 적용
 
-3. 결과 비교 후 서버 적용 결정
-   → 성능 향상 확인 시: .pt 파일 llm/ 루트에 복사 후 서버 재시작
+[실험용 — 미채택]
+3. KURE_Burnout_StyleTransfer_v2.ipynb
+   → stage2_model_st_v2.pt (F1 0.4690, 미사용)
+4. KURE_Burnout_E2E_v1.ipynb
+   → stage2_model_e2e_v1.pt (F1 0.4835, 참고용)
+
+[예정]
+5. 합성 데이터 생성 후 E2E v1 구조로 재학습
+   → scripts/generate_diary_data.py (로컬) → CSV → Colab
 ```

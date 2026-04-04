@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-번아웃 감지 AI 서버 v2.4
+번아웃 감지 AI 서버 v2.9
 =======================
 
-POST /analyze         : 분석 요청 -> 즉시 200 OK -> 백그라운드 분석 -> 콜백
-POST /feedback/batch  : 백엔드 2주 배치 피드백 수신 및 CSV 저장
-GET  /feedback/stats  : 누적 피드백 통계 조회
+POST /analyze                  : 분석 요청 -> 즉시 200 OK -> 큐 추가 -> 백그라운드 분석 -> 콜백
+POST /analysis/cancel/{diary_id}: 분석 취소 (큐 제거 + 플래그 등록)
+POST /feedback/batch           : 백엔드 2주 배치 피드백 수신 및 CSV 저장
+GET  /feedback/stats           : 누적 피드백 통계 조회
 
 실행: uvicorn ai_server:app --reload --port 8001
 """
@@ -14,13 +15,15 @@ import os
 import json
 import httpx
 import random
+import asyncio
+from collections import deque
 from typing import List, Dict, Optional
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 # 분할된 모듈 임포트
@@ -67,6 +70,14 @@ emotion_checker: Optional[EmotionMatchChecker] = None
 insight_gen: Optional[StatisticsInsightGenerator] = None
 feedback_store: Optional[FeedbackStore] = None
 
+# 분석 취소 요청된 diary_id set
+cancelled_diary_ids: set = set()
+
+# 분석 큐 (deque 기반 단일 worker)
+analysis_queue: deque = deque()
+analysis_queue_lock = asyncio.Lock()
+analysis_worker_task = None
+
 
 # ============================================
 # FastAPI 앱
@@ -74,10 +85,15 @@ feedback_store: Optional[FeedbackStore] = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global analyzer, feedback_gen, emotion_checker, insight_gen, feedback_store
+    global analyzer, feedback_gen, emotion_checker, insight_gen, feedback_store, analysis_worker_task
 
-    analyzer = BurnoutAnalyzer()
-    analyzer.initialize()
+    try:
+        analyzer = BurnoutAnalyzer()
+        analyzer.initialize()
+    except RuntimeError as e:
+        print(f"[경고] 모델 로드 실패: {e}")
+        print("[경고] 서버는 실행되지만 분석 요청은 실패합니다.")
+        analyzer = BurnoutAnalyzer()  # _initialized=False 상태 유지
 
     use_llm = os.getenv("USE_LLM", "false").lower() == "true"
     print(f"피드백 모드: {'LLM (KoAlpaca)' if use_llm else '템플릿'}")
@@ -87,14 +103,22 @@ async def lifespan(app: FastAPI):
     insight_gen = StatisticsInsightGenerator()
     feedback_store = FeedbackStore()
 
+    analysis_worker_task = asyncio.create_task(analysis_worker())
+
     yield
+
+    analysis_worker_task.cancel()
+    try:
+        await analysis_worker_task
+    except asyncio.CancelledError:
+        pass
     print("서버 종료")
 
 
 app = FastAPI(
     title="번아웃 감지 AI 서버",
     description="한국형 번아웃 감정 분석 API",
-    version="2.4.0",
+    version="2.9.0",
     lifespan=lifespan
 )
 
@@ -116,7 +140,7 @@ async def root():
     return {
         "status": "running",
         "service": "Burnout Detection AI Server",
-        "version": "2.4.0",
+        "version": "2.9.0",
         "device": Config.DEVICE,
         "model_loaded": analyzer is not None and analyzer._initialized,
         "features": [
@@ -192,19 +216,16 @@ async def health_check():
 
 
 @app.post("/analyze")
-async def analyze_diary(request: AnalyzeRequest, background_tasks: BackgroundTasks):
+async def analyze_diary(request: AnalyzeRequest):
     """일기 분석 요청 (비동기)"""
     if not request.history:
         raise HTTPException(status_code=400, detail="history가 비어있습니다.")
-    
-    background_tasks.add_task(
-        process_analysis,
-        diary_id=request.diary_id,
-        user_id=request.user_id,
-        persona=request.persona,
-        history=request.history
-    )
-    
+
+    async with analysis_queue_lock:
+        # 취소 플래그 초기화 (재분석 요청 시 이전 취소 상태 제거)
+        cancelled_diary_ids.discard(request.diary_id)
+        analysis_queue.append((request.diary_id, request.user_id, request.persona, request.history))
+
     return {"status": "accepted", "message": "분석이 시작되었습니다."}
 
 
@@ -302,6 +323,25 @@ async def get_activity_ids():
     return {"activities": ACTIVITY_CATEGORY_IDS}
 
 
+@app.post("/analysis/cancel/{diary_id}")
+async def cancel_analysis(diary_id: int):
+    """
+    일기 분석 취소 요청
+
+    백엔드가 일기 삭제 시 백그라운드로 호출.
+    - 큐에 대기 중이면 즉시 제거
+    - worker가 이미 꺼낸 경우 다음 체크포인트에서 중단
+    - 이미 완료됐거나 없는 diary_id면 무시 (에러 없음)
+    """
+    async with analysis_queue_lock:
+        cancelled_diary_ids.add(diary_id)
+        to_keep = [item for item in analysis_queue if item[0] != diary_id]
+        analysis_queue.clear()
+        analysis_queue.extend(to_keep)
+    print(f"분석 취소 요청: diary_id={diary_id}")
+    return {"message": "Analysis cancelled or ignored"}
+
+
 @app.get("/errors")
 async def list_error_codes():
     """에러 코드 목록 조회"""
@@ -329,6 +369,21 @@ async def list_error_codes():
 
 
 # ============================================
+# 분석 큐 worker
+# ============================================
+
+async def analysis_worker():
+    """단일 worker — 큐에서 순서대로 꺼내 처리 (GPU 동시 접근 없음)"""
+    while True:
+        async with analysis_queue_lock:
+            item = analysis_queue.popleft() if analysis_queue else None
+        if item:
+            await process_analysis(*item)
+        else:
+            await asyncio.sleep(0.1)
+
+
+# ============================================
 # 백그라운드 처리 함수
 # ============================================
 
@@ -339,7 +394,13 @@ async def process_analysis(diary_id: int, user_id: int, persona, history: List[D
     
     try:
         print(f"분석 시작: diary_id={diary_id}, user_id={user_id}, persona={persona}")
-        
+
+        # 취소 여부 확인 (시작 전)
+        if diary_id in cancelled_diary_ids:
+            cancelled_diary_ids.discard(diary_id)
+            print(f"분석 취소됨 (시작 전): diary_id={diary_id}")
+            return
+
         # 모델 로드 확인
         if not analyzer or not analyzer._initialized:
             raise AIServerException(ErrorCode.MODEL_NOT_LOADED)
@@ -396,6 +457,12 @@ async def process_analysis(diary_id: int, user_id: int, persona, history: List[D
             }
             fallback_used = True
         
+        # 취소 여부 확인 (분석 후)
+        if diary_id in cancelled_diary_ids:
+            cancelled_diary_ids.discard(diary_id)
+            print(f"분석 취소됨 (분석 후): diary_id={diary_id}")
+            return
+
         # 감정 일치도 검사
         emotion_match = None
         if today_diary.keywords:
@@ -427,6 +494,12 @@ async def process_analysis(diary_id: int, user_id: int, persona, history: List[D
             ai_message = get_fallback_feedback(category)
             fallback_used = True
         
+        # 취소 여부 확인 (피드백 생성 후)
+        if diary_id in cancelled_diary_ids:
+            cancelled_diary_ids.discard(diary_id)
+            print(f"분석 취소됨 (피드백 후): diary_id={diary_id}")
+            return
+
         # 활동 추천
         recommendations = []
         if len(history) >= Config.MIN_DIARY_COUNT_FOR_RECOMMENDATION:

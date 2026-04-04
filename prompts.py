@@ -474,6 +474,34 @@ def get_template_feedback(
 
 
 # ============================================
+# 페르소나 검증 패턴
+# ============================================
+
+PERSONA_VALIDATION: Dict[PersonaType, dict] = {
+    PersonaType.WARM_COUNSELOR: {
+        "required": ["요", "네요", "죠", "어요", "습니다"],
+        "forbidden": ["야", "해", "지ㅋ", "ㅋㅋ"],
+    },
+    PersonaType.PRACTICAL_ADVISOR: {
+        "required": ["요", "세요", "어요", "습니다", "보세요"],
+        "forbidden": ["야", "ㅋㅋ", "에휴", "헐"],
+    },
+    PersonaType.FRIENDLY_BUDDY: {
+        "required": ["야", "해", "지", "다", "어", "ㅎㅎ", "ㅋ"],
+        "forbidden": ["습니다", "드립니다", "하세요", "드세요"],
+    },
+    PersonaType.CALM_MENTOR: {
+        "required": ["요", "어요", "죠", "습니다", "네요"],
+        "forbidden": ["야", "ㅋㅋ", "헐", "에휴", "!"],
+    },
+    PersonaType.CHEERFUL_SUPPORTER: {
+        "required": ["요", "어요", "!"],
+        "forbidden": ["야", "ㅋㅋ", "습니다"],
+    },
+}
+
+
+# ============================================
 # 유틸리티 함수
 # ============================================
 

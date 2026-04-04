@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \":*)",
+      "Bash(python /tmp/make_v3_nb.py)",
+      "Bash(python D:/Programming/Projects/Burnout/llm/scripts/../docs/../scripts/../docs/../scripts/../docs/../make_v3_nb_temp.py)",
+      "Bash(python make_v3_nb_temp.py)",
+      "Bash(rm make_v3_nb_temp.py)"
+    ]
+  }
+}

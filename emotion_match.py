@@ -3,10 +3,10 @@
 감정 일치도 검사기
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from config import Config
-from constants import ENERGY_TO_EMOTION_MAP, DETAIL_KEYWORD_TO_EMOTION
+from constants import ENERGY_TO_EMOTION_MAP, DETAIL_KEYWORD_TO_EMOTION, USER_TYPE_TO_EMOTION, FEELING_TO_EMOTION
 from models import EmotionMatchResult
 from prompts import PersonaType, PERSONAS
 
@@ -23,21 +23,31 @@ class EmotionMatchChecker:
     
     def check_match(self, user_keywords: Dict[str, Any], ai_result: Dict) -> EmotionMatchResult:
         """감정 일치도 검사"""
-        # 사용자 선택에서 감정 추출
+        # 사용자 선택에서 감정 추출 — 추출 실패 시 None
         user_emotion = self._extract_user_emotion(user_keywords)
-        
+
+        # 사용자 감정을 특정할 수 없으면 비교 불가 → 일치로 처리
+        if user_emotion is None:
+            return EmotionMatchResult(
+                is_matched=True,
+                user_emotion="unknown",
+                ai_emotion=ai_result.get("burnout_category") or ai_result.get("primary_emotion", "긍정"),
+                match_score=1.0,
+                hidden_emotion_hint=None
+            )
+
         # AI 분석 결과에서 감정 추출
         ai_emotion = ai_result.get("burnout_category") or ai_result.get("primary_emotion", "긍정")
-        
+
         # 일치도 계산
         match_score = self._calculate_match_score(user_emotion, ai_emotion)
         is_matched = match_score >= Config.EMOTION_MISMATCH_THRESHOLD
-        
+
         # 불일치 시 힌트 메시지 생성
         hidden_emotion_hint = None
         if not is_matched:
             hidden_emotion_hint = self._generate_mismatch_hint(user_emotion, ai_emotion)
-        
+
         return EmotionMatchResult(
             is_matched=is_matched,
             user_emotion=user_emotion,
@@ -46,21 +56,37 @@ class EmotionMatchChecker:
             hidden_emotion_hint=hidden_emotion_hint
         )
     
-    def _extract_user_emotion(self, user_keywords: Dict[str, Any]) -> str:
-        """사용자 선택에서 주요 감정 추출"""
-        # 상세 키워드에서 감정 추출
+    def _extract_user_emotion(self, user_keywords: Dict[str, Any]) -> Optional[str]:
+        """사용자 선택에서 주요 감정 추출. 추출 불가 시 None 반환.
+
+        우선순위:
+        1. "나의 유형" — 사용자가 직접 카테고리를 선택한 경우
+        2. "감정"      — 감정 단어로 카테고리 추론
+        3. (구형) energy_category / detail_keywords
+        """
+        # 1. "나의 유형" 필드 (가장 신뢰도 높음)
+        user_type = user_keywords.get("나의 유형", "")
+        if user_type in USER_TYPE_TO_EMOTION:
+            return USER_TYPE_TO_EMOTION[user_type]
+
+        # 2. "감정" 필드
+        feeling = user_keywords.get("감정", "")
+        if feeling in FEELING_TO_EMOTION:
+            return FEELING_TO_EMOTION[feeling]
+
+        # 3. 구형 형식 폴백 (energy_category / detail_keywords)
         detail_keywords = user_keywords.get("detail_keywords", [])
         if isinstance(detail_keywords, list) and detail_keywords:
             for kw in detail_keywords:
                 if kw in DETAIL_KEYWORD_TO_EMOTION:
                     return DETAIL_KEYWORD_TO_EMOTION[kw]
-        
-        # 에너지 분류에서 감정 추출
+
         energy_category = user_keywords.get("energy_category", "")
         if energy_category in ENERGY_TO_EMOTION_MAP:
             return ENERGY_TO_EMOTION_MAP[energy_category][0]
-        
-        return "긍정"
+
+        # 감정을 특정할 수 없으면 None
+        return None
     
     def _calculate_match_score(self, user_emotion: str, ai_emotion: str) -> float:
         """일치도 점수 계산"""

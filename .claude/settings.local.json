@@ -5,7 +5,18 @@
       "Bash(python /tmp/make_v3_nb.py)",
       "Bash(python D:/Programming/Projects/Burnout/llm/scripts/../docs/../scripts/../docs/../scripts/../docs/../make_v3_nb_temp.py)",
       "Bash(python make_v3_nb_temp.py)",
-      "Bash(rm make_v3_nb_temp.py)"
+      "Bash(rm make_v3_nb_temp.py)",
+      "Bash(grep -r '부정적인 결과' /d/Programming/Projects/Burnout/llm --include=*.py --include=*.ipynb)",
+      "Bash(grep -r 부정적 /d/Programming/Projects/Burnout/llm --include=*.py)",
+      "Bash(grep -n \"Stage.*부정\\\\|부정.*관련\\\\|부정.*메시지\\\\|부정.*응답\" /d/Programming/Projects/Burnout/llm/*.py)",
+      "Bash(xargs grep:*)",
+      "Bash(grep -rn \"긍정적인\\\\|부정적인\\\\|경계\\\\|주의\\\\|위험\" /d/Programming/Projects/Burnout/llm/*.py)",
+      "Bash(python -c ':*)",
+      "Bash(python3)",
+      "Bash(python3 -c ':*)",
+      "Bash(python3 -c \"import json; nb = json.load\\(open\\('D:/Programming/Projects/Burnout/llm/notebooks/KURE_Burnout_SyntheticData_v3.ipynb'\\)\\); print\\(len\\([c for c in nb['cells'] if c['cell_type'] == 'code']\\)\\)\")",
+      "Read(//tmp/**)",
+      "Bash(py -c ':*)"
     ]
   }
 }

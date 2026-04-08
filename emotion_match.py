@@ -130,10 +130,10 @@ class EmotionMatchChecker:
         if self.persona_type == PersonaType.FRIENDLY_BUDDY:
             return f"{user_emotion_kr}이라고 했는데, 혹시 {ai_emotion_kr}도 느끼고 있는 거 아니야? 괜찮아, 솔직해도 돼."
         elif self.persona_type == PersonaType.PRACTICAL_ADVISOR:
-            return f"선택하신 '{user_emotion_kr}' 외에 '{ai_emotion_kr}'의 흔적도 보입니다. 다양한 감정이 섞여 있을 수 있어요."
+            return f"{user_emotion_kr} 뒤에 {ai_emotion_kr}의 흔적도 보입니다. 다양한 감정이 섞여 있을 수 있어요."
         elif self.persona_type == PersonaType.CHEERFUL_SUPPORTER:
-            return f"'{user_emotion_kr}'라고 하셨지만, '{ai_emotion_kr}'도 살짝 느껴지는 것 같아요! 감정은 복잡한 거니까요~"
+            return f"{user_emotion_kr}라고 하셨지만, {ai_emotion_kr}도 살짝 느껴지는 것 같아요! 감정은 복잡한 거니까요~"
         elif self.persona_type == PersonaType.CALM_MENTOR:
-            return f"'{user_emotion_kr}' 뒤에 '{ai_emotion_kr}'이 숨어 있을 수 있습니다. 천천히 자신의 마음을 들여다보세요."
+            return f"{user_emotion_kr} 뒤에 {ai_emotion_kr}이 숨어 있을 수 있습니다. 천천히 자신의 마음을 들여다보세요."
         else:  # WARM_COUNSELOR
-            return f"'{user_emotion_kr}'라고 하셨지만, 기록에서는 '{ai_emotion_kr}'도 느껴져요. 혹시 숨겨진 감정이 있으신 건 아닐까요?"
+            return f"{user_emotion_kr}라고 하셨지만, 기록에서는 {ai_emotion_kr}도 느껴져요. 혹시 숨겨진 감정이 있으신 건 아닐까요?"

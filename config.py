@@ -13,7 +13,7 @@ class Config:
         "BACKEND_CALLBACK_URL",
         "http://127.0.0.1:8000/diaries/analysis-callback"
     )
-    MODEL_DIR = os.getenv("MODEL_DIR", ".")
+    MODEL_DIR = os.getenv("MODEL_DIR", "./models")
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
     MIN_DIARY_COUNT_FOR_RECOMMENDATION = 3
     MIN_DIARY_COUNT_FOR_INSIGHT = 3

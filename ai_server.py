@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-번아웃 감지 AI 서버 v2.13
+번아웃 감지 AI 서버 v2.15
 =======================
 
 POST /analyze                  : 분석 요청 -> 즉시 200 OK -> 큐 추가 -> 백그라운드 분석 -> 콜백
@@ -119,7 +119,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="번아웃 감지 AI 서버",
     description="한국형 번아웃 감정 분석 API",
-    version="2.13.0",
+    version="2.15.0",
     lifespan=lifespan
 )
 
@@ -141,7 +141,7 @@ async def root():
     return {
         "status": "running",
         "service": "Burnout Detection AI Server",
-        "version": "2.13.0",
+        "version": "2.15.0",
         "device": Config.DEVICE,
         "model_loaded": analyzer is not None and analyzer._initialized,
         "features": [
@@ -214,7 +214,7 @@ async def analyze_diary(request: AnalyzeRequest):
 
 @app.post("/analyze/sync")
 async def analyze_sync(request: AnalyzeRequest):
-    """동기 분석 (테스트용) — analyze_batch 사용"""
+    """동기 분석 (테스트용) — CURRENT만 분석, PAST_ANALYSIS는 백엔드 결과 그대로 사용"""
     if not request.history:
         raise HTTPException(status_code=400, detail="history가 비어있습니다.")
 
@@ -223,22 +223,27 @@ async def analyze_sync(request: AnalyzeRequest):
     emotion_checker.set_persona(persona_type)
     insight_gen.set_persona(persona_type)
 
-    batch_items = [{"text": d.content or "", "keywords": d.keywords or {}} for d in request.history]
+    # CURRENT만 필터링해서 분석 (PAST_ANALYSIS는 content 없으므로 KURE 돌릴 필요 없음)
+    current_diaries = [d for d in request.history if d.is_current()]
+    if not current_diaries:
+        raise HTTPException(status_code=400, detail="history에 CURRENT 일기가 없습니다.")
+
+    batch_items = [{"text": d.content or "", "keywords": d.keywords or {}} for d in current_diaries]
     batch_results = analyzer.analyze_batch(batch_items)
 
-    diary_analyses = [
-        DiaryAnalysisResult(
-            diary_id=d.diary_id,
-            primary_emotion=r["primary_emotion"],
-            primary_score=round(r["primary_score"], 4),
-            mbi_category=r["mbi_category"],
-            keywords=r.get("keywords", [])
-        )
-        for d, r in zip(request.history, batch_results)
-    ]
+    # diary_id → 분석결과 매핑
+    current_results_by_id = {d.diary_id: r for d, r in zip(current_diaries, batch_results)}
 
-    today_diary = request.history[0]
-    today_result = batch_results[0]
+    # diary_analyses 조립: CURRENT는 방금 분석한 결과, PAST는 백엔드가 보낸 결과 사용
+    diary_analyses = [_history_to_analysis_result(d, current_results_by_id) for d in request.history]
+
+    today_diary = request.history[0]  # 명세: 첫 항목이 CURRENT
+    today_result = current_results_by_id.get(today_diary.diary_id)
+    if today_result is None:
+        # 첫 항목이 CURRENT가 아닌 이상 케이스 (드물면)
+        today_diary = current_diaries[0]
+        today_result = current_results_by_id[today_diary.diary_id]
+
     category = "긍정" if today_result["primary_emotion"] == "긍정" else today_result.get("burnout_category", "정서적_고갈")
 
     emotion_match = None
@@ -389,57 +394,63 @@ async def process_analysis(diary_id: int, user_id: int, persona, history: List[D
         emotion_checker.set_persona(persona_type)
         insight_gen.set_persona(persona_type)
 
-        # ── 히스토리 전체 배치 분석 (임베딩 1회) ──
-        today_diary = history[0]
+        # ── CURRENT만 필터링해서 분석 (PAST_ANALYSIS는 백엔드가 보낸 결과를 그대로 사용) ──
+        today_diary = history[0]  # 명세: 첫 항목이 CURRENT
+        current_diaries = [d for d in history if d.is_current()]
+
+        if not current_diaries:
+            # CURRENT가 하나도 없으면 분석 불가
+            raise AIServerException(ErrorCode.CONTENT_TOO_SHORT, "history에 CURRENT 일기가 없습니다.")
+
         diary_analyses = []
         today_result = None
         category = "긍정"
 
-        if today_diary.content and len((today_diary.content or "").strip()) < 10:
+        if today_diary.is_current() and today_diary.content and len((today_diary.content or "").strip()) < 10:
             errors.append(create_error(ErrorCode.CONTENT_TOO_SHORT, f"내용 길이: {len(today_diary.content)}자"))
 
         try:
+            # CURRENT만 배치 분석
             batch_items = [
                 {"text": d.content or "", "keywords": d.keywords or {}}
-                for d in history
+                for d in current_diaries
             ]
             batch_results = analyzer.analyze_batch(batch_items)
+            current_results_by_id = {d.diary_id: r for d, r in zip(current_diaries, batch_results)}
 
-            for diary, result in zip(history, batch_results):
-                diary_analyses.append(DiaryAnalysisResult(
-                    diary_id=diary.diary_id,
-                    primary_emotion=result["primary_emotion"],
-                    primary_score=round(result["primary_score"], 4),
-                    mbi_category=result["mbi_category"],
-                    keywords=result.get("keywords", [])
-                ))
+            # diary_analyses 조립: CURRENT는 방금 분석한 결과, PAST는 백엔드에서 온 결과 사용
+            for diary in history:
+                diary_analyses.append(_history_to_analysis_result(diary, current_results_by_id))
 
-            today_result = batch_results[0]
+            # 오늘 일기 분석 결과 추출
+            today_result = current_results_by_id.get(today_diary.diary_id)
+            if today_result is None:
+                # 첫 항목이 CURRENT가 아니었을 경우의 폴백
+                today_diary = current_diaries[0]
+                today_result = current_results_by_id[today_diary.diary_id]
+
             category = "긍정" if today_result["primary_emotion"] == "긍정" else today_result.get("burnout_category", "정서적_고갈")
 
+        except AIServerException:
+            raise  # 상위로 그대로 전파
         except Exception as e:
             errors.append(create_error(ErrorCode.ANALYSIS_FAILED, str(e)))
-            # 배치 실패 시 단건 fallback
-            for diary in history:
+            # 배치 실패 시 CURRENT만 단건 fallback (PAST는 원래 이미 분석된 결과 사용)
+            current_results_by_id = {}
+            for diary in current_diaries:
                 try:
                     result = analyzer.analyze(diary.content or "", diary.keywords or {})
-                    diary_analyses.append(DiaryAnalysisResult(
-                        diary_id=diary.diary_id,
-                        primary_emotion=result["primary_emotion"],
-                        primary_score=round(result["primary_score"], 4),
-                        mbi_category=result["mbi_category"],
-                        keywords=result.get("keywords", [])
-                    ))
+                    current_results_by_id[diary.diary_id] = result
                 except Exception as e2:
                     errors.append(create_error(ErrorCode.ANALYSIS_FAILED, f"diary_id={diary.diary_id}: {str(e2)}"))
-                    diary_analyses.append(DiaryAnalysisResult(
-                        diary_id=diary.diary_id,
-                        primary_emotion="긍정",
-                        primary_score=0.5,
-                        mbi_category="NORMAL",
-                        keywords=[]
-                    ))
-            today_result = {
+                    current_results_by_id[diary.diary_id] = {
+                        "primary_emotion": "긍정", "primary_score": 0.5, "mbi_category": "NORMAL",
+                        "emotion_probs": {"긍정": 0.5, "부정": 0.5}, "keywords": []
+                    }
+            for diary in history:
+                diary_analyses.append(_history_to_analysis_result(diary, current_results_by_id))
+
+            today_result = current_results_by_id.get(today_diary.diary_id) or {
                 "primary_emotion": "긍정", "primary_score": 0.5, "mbi_category": "NORMAL",
                 "emotion_probs": {"긍정": 0.5, "부정": 0.5}, "keywords": []
             }
@@ -551,6 +562,47 @@ async def process_analysis(diary_id: int, user_id: int, persona, history: List[D
 # 헬퍼 함수
 # ============================================
 
+def _history_to_analysis_result(diary: "DiaryHistory", current_results_by_id: Dict[int, Dict]) -> "DiaryAnalysisResult":
+    """DiaryHistory 항목을 DiaryAnalysisResult로 변환.
+
+    - CURRENT: 방금 분석한 결과(current_results_by_id) 사용 (mbi_category는 한국어)
+    - PAST_ANALYSIS: 백엔드가 보낸 이전 분석 결과 사용 (mbi_category는 영문 → 한국어 변환)
+    """
+    from constants import MBI_CATEGORY_REVERSE_MAP
+
+    if diary.is_current():
+        # CURRENT: 방금 분석한 결과가 있어야 함
+        result = current_results_by_id.get(diary.diary_id)
+        if result is None:
+            # 분석 실패 케이스 폴백
+            return DiaryAnalysisResult(
+                diary_id=diary.diary_id,
+                primary_emotion="긍정",
+                primary_score=0.5,
+                mbi_category="NORMAL",
+                keywords=[]
+            )
+        return DiaryAnalysisResult(
+            diary_id=diary.diary_id,
+            primary_emotion=result["primary_emotion"],
+            primary_score=round(result["primary_score"], 4),
+            mbi_category=result["mbi_category"],  # 한국어 (analyzer 출력)
+            keywords=result.get("keywords", [])
+        )
+    else:
+        # PAST_ANALYSIS: 백엔드가 보낸 결과 그대로 사용
+        # mbi_category는 내부 처리에서 한국어 키가 필요하므로 역변환
+        raw_mbi = diary.mbi_category or "NORMAL"
+        mbi_korean = MBI_CATEGORY_REVERSE_MAP.get(raw_mbi, "NORMAL")
+        return DiaryAnalysisResult(
+            diary_id=diary.diary_id,
+            primary_emotion=diary.primary_emotion or "긍정",
+            primary_score=round(diary.primary_score or 0.0, 4),
+            mbi_category=mbi_korean,
+            keywords=[]  # PAST는 키워드가 없음
+        )
+
+
 def infer_user_preference(user_text: str, keywords: List[str]) -> Dict[str, Optional[bool]]:
     """user_text + keywords에서 성향(is_active/is_outdoor/is_social) 추론"""
     combined = user_text + " " + " ".join(keywords)
@@ -618,7 +670,9 @@ def generate_recommendations(category: str, user_text: str, keywords: List[str])
 
 
 async def send_callback(data: AnalysisCallback):
-    """백엔드 콜백 전송"""
+    """백엔드 콜백 전송. mbi_category는 한국어 → 영문으로 변환 (명세 2-5)."""
+    from constants import MBI_CATEGORY_MAP
+
     try:
         emotion_probs: dict = dict(data.emotion_probs)
         if data.statistics_insight:
@@ -636,11 +690,14 @@ async def send_callback(data: AnalysisCallback):
                 "insight_messages": si.insight_messages,
             }
 
+        # mbi_category 한국어 → 영문 변환 (명세 2-5에 따라 백엔드는 영문을 기대)
+        mbi_category_en = MBI_CATEGORY_MAP.get(data.mbi_category, data.mbi_category)
+
         payload = {
             "diary_id": data.diary_id,
             "primary_emotion": data.primary_emotion,
             "primary_score": data.primary_score,
-            "mbi_category": data.mbi_category,
+            "mbi_category": mbi_category_en,
             "emotion_probs": emotion_probs,
             "ai_message": data.ai_message,
             "recommendations": [

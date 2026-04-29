@@ -13,11 +13,36 @@ from error_codes import ErrorDetail
 # ============================================
 
 class DiaryHistory(BaseModel):
-    """일기 히스토리 항목"""
+    """일기 히스토리 항목
+
+    백엔드 명세 2-5-0 기준:
+    - type="CURRENT"  : 오늘 작성한 일기. content + keywords 포함.
+    - type="PAST_ANALYSIS" : 과거 분석 완료 일기. 분석 결과만 포함 (content/keywords 없음).
+
+    모든 필드를 Optional로 잡아 type에 따라 유연하게 처리.
+    type 필드가 없는 구버전 요청도 하위 호환으로 수용 (content 있으면 CURRENT 취급).
+    """
     diary_id: int
+    created_at: str
+
+    # CURRENT/PAST_ANALYSIS 구분
+    type: Optional[str] = None
+
+    # CURRENT 전용
     content: Optional[str] = None
     keywords: Optional[Dict[str, Any]] = None
-    created_at: str
+
+    # PAST_ANALYSIS 전용 (이미 분석된 결과)
+    primary_emotion: Optional[str] = None
+    primary_score: Optional[float] = None
+    mbi_category: Optional[str] = None  # 영문 (EMOTIONAL_EXHAUSTION 등) 또는 "NORMAL"/"NONE"
+    emotion_probs: Optional[Dict[str, Any]] = None
+
+    def is_current(self) -> bool:
+        """오늘 작성된 일기인지 판정. type 필드 우선, 없으면 content 존재 여부로 폴백."""
+        if self.type:
+            return self.type == "CURRENT"
+        return self.content is not None
 
 
 class AnalyzeRequest(BaseModel):

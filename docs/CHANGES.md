@@ -1,5 +1,46 @@
 # 변경사항
 
+## v2.15 — 2026-04-29 백엔드 입력 형식 변경 대응 (CURRENT/PAST_ANALYSIS)
+
+> **API 명세 변경 대응** — 백엔드(`ai_services.py`)가 history를 CURRENT/PAST_ANALYSIS로 나눠 보내도록 변경됨.
+
+### 배경
+백엔드가 이제 history의 각 항목을 두 종류로 나눠 보내:
+- `type="CURRENT"` : 오늘 작성한 일기 → `content` + `keywords` 포함
+- `type="PAST_ANALYSIS"` : 과거 일기 → 이미 분석된 결과만 포함 (`primary_emotion`, `primary_score`, `mbi_category`(영문), `emotion_probs`)
+
+기존 코드는 history 전체를 KURE 임베딩으로 재분석 시도 → 과거 일기는 `content`가 없으므로 빈 문자열 임베딩 돌려 **잘못된 결과 + GPU 낭비** 발생.
+
+### 수정 사항
+
+#### `models.py`
+- `DiaryHistory`에 필드 추가:
+  - `type: Optional[str]` ("CURRENT" / "PAST_ANALYSIS")
+  - `primary_emotion`, `primary_score`, `mbi_category`, `emotion_probs` (모두 Optional, PAST_ANALYSIS용)
+- `is_current()` 메서드 추가 — type 우선, 없으면 content 존재 여부로 폴백 (구버전 하위 호환)
+
+#### `ai_server.py`
+- `process_analysis` / `analyze_sync`: history에서 CURRENT만 필터링해 `analyze_batch()` 호출 → 임베딩 낭비 제거
+- PAST_ANALYSIS는 백엔드가 보낸 분석 결과를 그대로 `diary_analyses`에 제공
+- 새 헬퍼 `_history_to_analysis_result()` 추가 — CURRENT/PAST 분기해서 `DiaryAnalysisResult` 조립
+- `send_callback`: `mbi_category` 한국어 → 영문 변환해서 전송 (명세 2-5 준수)
+- 버전 업: 2.13.0 → 2.15.0
+
+#### `constants.py`
+- `MBI_CATEGORY_MAP`: `"긍정" → "NORMAL"` (기존 `"NONE"`에서 변경, 백엔드 명세 2-5 반영)
+- `MBI_CATEGORY_REVERSE_MAP` 신규 추가 — 영문(`EMOTIONAL_EXHAUSTION` 등) → 한국어 역변환. PAST_ANALYSIS의 mbi_category를 내부 처리용 한국어 키로 바꾸는 데 사용. `"NONE"` 구버전 입력도 `"NORMAL"`로 흡수.
+
+### 경계 설계
+- **내부**: mbi_category는 한국어 키 (`"정서적_고갈"` 등) — analyzer/insight 코드 호환 유지
+- **외부 IO**: 영문 (`"EMOTIONAL_EXHAUSTION"` 등) — 명세 준수
+- 바운더리: `_history_to_analysis_result()` (입력 변환) + `send_callback()` (출력 변환)
+
+### 알려진 한계
+- **통계 (`situation_frequency`, `top_keywords`)**: PAST_ANALYSIS에 keywords가 없어 오늘 1건으로만 집계됨. 윤정 확인 결과 이게 원래 합의 맞음 (PAST는 분석 결과만 전송).
+- **정상 동작**: `burnout_trend` / `mbi_distribution`은 PAST_ANALYSIS의 `mbi_category`로 2주치 제대로 집계됨 (교수님 요구사항과 일치).
+
+---
+
 ## v4.4 — 2026-04-08 이중 검증셋 분리 (diary holodout)
 
 > **코드 변경 없음** — 데이터 분리 작업

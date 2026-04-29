@@ -19,7 +19,7 @@
 
 ```
 llm/
-├── ai_server.py       # FastAPI 메인 (v2.13)
+├── ai_server.py       # FastAPI 메인 (v2.15)
 ├── analyzer.py        # KURE 임베딩 + 2단계 분류 + analyze_batch()
 ├── feedback.py        # 템플릿/LLM 피드백 생성
 ├── emotion_match.py   # 감정 일치도 검사
@@ -220,13 +220,17 @@ llm/
 
 v2.7~v2.13 모든 변경은 **내부 구현 개선**이며 외부 API 계약은 변경 없음.
 
+**v2.15 (2026-04-29)**: 백엔드 입력 형식 변경 대응 (CURRENT/PAST_ANALYSIS 분기, mbi_category 외부 IO 영문화). 내부는 여전히 한국어 키 유지.
+
 ---
 
 ## 주의사항
 
 - `stage1_model.pt` / `stage2_model.pt` 는 llm/ 루트에 위치해야 서버 로드 가능
 - KURE 백본은 항상 frozen (E2E 실험 제외)
-- `mbi_category` 값은 **한국어**로 통일 (`정서적_고갈` 등), `NORMAL`만 영문 예외
+- `mbi_category` 값은 **내부에서는 한국어** (`정서적_고갈` 등), `NORMAL`만 영문 예외
+- **외부 IO에서는 영문** (`EMOTIONAL_EXHAUSTION` 등, 명세 2-5). `send_callback`과 `_history_to_analysis_result`가 경계 변환 담당
+- `긍정 ↔ NORMAL` 매핑: 내부 `"긍정"`/`"NORMAL"` 모두 사용 가능, 외부는 항상 `NORMAL`
 - Stage 2 미실행 시 카테고리 확률은 `-1.0` 센티널 (0.0과 구분)
 - 콜백 실패 시 `error_codes.py`의 AI4xxx 계열 에러 확인
 
@@ -240,6 +244,7 @@ v2.7~v2.13 모든 변경은 **내부 구현 개선**이며 외부 API 계약은 
 | 일기 vs 챗봇 | 교수님이 챗봇 전환 직접 제안 (2026-03-11 발표 피드백) — 팀 논의 필요 |
 | 혼합 비율 최적값 | 현재 1:7 최고(F1=0.4849, warm-start 미적용). SyntheticData v4로 1:7/1:9/1:11 warm-start 재실험 필요 |
 | 발표 구조 개편 | 교수님 피드백: "하루치로 번아웃 판단은 의미 없다. 시간축 변화량이 필요하다." 히스토리 누적 → 패턴 변화 → 판단 고도화 흐름을 발표 자료에 명시적으로 표현할 것. insight.py의 burnout_trend/mbi_distribution이 이미 구현돼 있음 — 발표에서 안 보이는 게 문제. |
+| ~~PAST_ANALYSIS keywords 누락~~ (해결됨, 2026-04-29) | 윤정 확인 결과 PAST_ANALYSIS는 분석 결과만 보내는 게 원래 합의 맞음. 우리 코드는 그대로 유지. 단, **2주치 situation_frequency / top_keywords 통계는 오늘 1건만으로 집계됨** — 의미 없음. 반면 burnout_trend / mbi_distribution은 PAST_ANALYSIS의 mbi_category로 제대로 집계됨 (교수님 요구사항과 일치). 발표에서는 burnout_trend 중심으로 강조. |
 
 ---
 

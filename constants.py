@@ -335,12 +335,31 @@ SITUATION_KEYWORDS = {
 STAGE1_CATEGORIES = {0: "긍정", 1: "부정"}
 STAGE2_CATEGORIES = {0: "정서적_고갈", 1: "좌절_압박", 2: "부정적_대인관계", 3: "자기비하"}
 
+# 한국어(내부) → 영문(외부 콜백/백엔드 명세) 매핑
+# 백엔드 명세 2-5 기준: 긍정 = NORMAL (기존 NONE에서 변경)
 MBI_CATEGORY_MAP = {
-    "긍정": "NONE",
+    "긍정": "NORMAL",
+    "NORMAL": "NORMAL",  # analyzer가 긍정일 때 "NORMAL"을 반환하므로
     "정서적_고갈": "EMOTIONAL_EXHAUSTION",
     "좌절_압박": "FRUSTRATION_PRESSURE",
     "부정적_대인관계": "NEGATIVE_RELATIONSHIP",
     "자기비하": "SELF_DEPRECATION"
+}
+
+# 영문(외부 입력) → 한국어(내부 키) 역매핑
+# 백엔드가 PAST_ANALYSIS의 mbi_category를 영문으로 보내오면 내부 한국어 키로 변환
+MBI_CATEGORY_REVERSE_MAP = {
+    "NORMAL": "NORMAL",        # 내부에서도 NORMAL 유지 (analyzer 호환)
+    "NONE": "NORMAL",          # 구버전 호환 (NONE → NORMAL로 흡수)
+    "EMOTIONAL_EXHAUSTION": "정서적_고갈",
+    "FRUSTRATION_PRESSURE": "좌절_압박",
+    "NEGATIVE_RELATIONSHIP": "부정적_대인관계",
+    "SELF_DEPRECATION": "자기비하",
+    # 한국어로 들어와도 그대로 통과
+    "정서적_고갈": "정서적_고갈",
+    "좌절_압박": "좌절_압박",
+    "부정적_대인관계": "부정적_대인관계",
+    "자기비하": "자기비하",
 }
 
 BURNOUT_KEYWORDS = {
